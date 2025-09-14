@@ -62,10 +62,10 @@ class EmailParser:
                 'references': self._extract_references(msg),
                 'in_reply_to': msg.get('In-Reply-To', ''),
                 'thread_id': self._extract_thread_id(msg),
-                'body': self._extract_body(msg),
-                'attachments': self._extract_attachments(msg),
                 'html_content': self._extract_html_content(msg),
                 'text_content': self._extract_text_content(msg),
+                'attachments': self._extract_attachments(msg),
+                'body': '', # Will be set below
                 'priority': self._extract_priority(msg),
                 'importance': self._extract_importance(msg),
                 'security_info': self._extract_security_info(msg),
@@ -74,8 +74,13 @@ class EmailParser:
             }
             
             # Sanitize content
-            parsed['body'] = self.sanitize_content(parsed['body'])
             parsed['html_content'] = self.sanitize_html(parsed['html_content'])
+
+            # Set body based on content
+            if parsed['html_content']:
+                parsed['body'] = parsed['html_content']
+            else:
+                parsed['body'] = parsed['text_content']
             
             return parsed
             
@@ -168,18 +173,6 @@ class EmailParser:
         
         return hashlib.md5(subject.encode()).hexdigest()
     
-    def _extract_body(self, msg: email.message.Message) -> str:
-        """Extract main email body"""
-        html_content = self._extract_html_content(msg)
-        text_content = self._extract_text_content(msg)
-        
-        # Prefer text content, fallback to HTML
-        if text_content:
-            return text_content
-        elif html_content:
-            return self._html_to_text(html_content)
-        else:
-            return ""
     
     def _extract_html_content(self, msg: email.message.Message) -> str:
         """Extract HTML content from email"""
@@ -248,13 +241,15 @@ class EmailParser:
                         # Decode filename
                         filename = self._decode_header(filename)
                         
+                        payload = part.get_payload(decode=True) or b''
                         attachment = {
                             'filename': filename,
                             'content_type': content_type,
-                            'size': len(part.get_payload(decode=True) or b''),
+                            'size': len(payload),
+                            'content': base64.b64encode(payload).decode('utf-8'),
                             'content_id': part.get('Content-ID', ''),
                             'content_disposition': content_disposition,
-                            'checksum': self._calculate_checksum(part.get_payload(decode=True) or b'')
+                            'checksum': self._calculate_checksum(payload)
                         }
                         
                         attachments.append(attachment)

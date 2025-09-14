@@ -1,22 +1,37 @@
+print("Starting app.py")
+print("Importing flask")
 from flask import Flask, render_template, jsonify, request, Response, stream_template
+print("Importing flask_cors")
 from flask_cors import CORS
+print("Importing decouple")
 from decouple import config
+print("Importing logging")
 import logging
+print("Importing json")
 import json
+print("Importing datetime")
 from datetime import datetime, timedelta
+print("Importing threading")
 import threading
+print("Importing time")
 import time
 
 # Import our modules
+print("Importing models")
 from models import db, Email, EmailOperation, EmailAttachment, User, EmailThread, Notification
+print("Importing flask_migrate")
 from flask_migrate import Migrate
-from redis_client import redis_client
+print("Importing imap_manager")
 from imap_manager import imap_manager
+print("Importing email_parser")
 from email_parser import email_parser
+print("Importing storage_client")
 from storage_client import storage_client
+print("Importing email_sync_service")
 from email_sync_service import email_sync_service
-from tasks import sync_emails, process_new_email, process_pending_operations
-from celery_config import celery_app
+print("Importing background_tasks")
+from background_tasks import task_manager, start_periodic_tasks, sync_emails_task
+print("Imports complete")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +59,12 @@ app.config['SECRET_KEY'] = config('SECRET_KEY', default='your-secret-key-here')
 # Initialize extensions
 db.init_app(app)
 migrate = Migrate(app, db)
+
+# Initialize caching
+from flask_caching import Cache
+app.config['CACHE_TYPE'] = 'FileSystemCache'
+app.config['CACHE_DIR'] = 'cache'
+cache = Cache(app)
 
 # Database tables will be created by init_db.py script
 
@@ -221,13 +242,13 @@ def mark_as_read(email_id):
         db.session.commit()
         
         # Invalidate cache
-        redis_client.invalidate_email_cache('default', email_id)
+        cache.delete(f"email:{email_id}")
         
-        # Publish event
-        redis_client.publish_email_event('email_read', {
-            'email_id': email_id,
-            'timestamp': datetime.utcnow().isoformat()
-        })
+        # Publish event (dummy)
+        # redis_client.publish_email_event('email_read', {
+        #     'email_id': email_id,
+        #     'timestamp': datetime.utcnow().isoformat()
+        # })
         
         return jsonify({"success": True, "email": {
             "id": email.id,
@@ -259,13 +280,13 @@ def mark_as_unread(email_id):
         db.session.commit()
         
         # Invalidate cache
-        redis_client.invalidate_email_cache('default', email_id)
+        cache.delete(f"email:{email_id}")
         
-        # Publish event
-        redis_client.publish_email_event('email_unread', {
-            'email_id': email_id,
-            'timestamp': datetime.utcnow().isoformat()
-        })
+        # Publish event (dummy)
+        # redis_client.publish_email_event('email_unread', {
+        #     'email_id': email_id,
+        #     'timestamp': datetime.utcnow().isoformat()
+        # })
         
         return jsonify({"success": True, "email": {
             "id": email.id,
@@ -297,7 +318,7 @@ def flag_email(email_id):
         db.session.commit()
         
         # Invalidate cache
-        redis_client.invalidate_email_cache('default', email_id)
+        cache.delete(f"email:{email_id}")
         
         return jsonify({"success": True, "email": {
             "id": email.id,
@@ -321,7 +342,7 @@ def star_email(email_id):
         db.session.commit()
         
         # Invalidate cache
-        redis_client.invalidate_email_cache('default', email_id)
+        cache.delete(f"email:{email_id}")
         
         return jsonify({"success": True, "email": {
             "id": email.id,
@@ -353,13 +374,13 @@ def delete_email(email_id):
         db.session.commit()
         
         # Invalidate cache
-        redis_client.invalidate_email_cache('default', email_id)
+        cache.delete(f"email:{email_id}")
         
-        # Publish event
-        redis_client.publish_email_event('email_deleted', {
-            'email_id': email_id,
-            'timestamp': datetime.utcnow().isoformat()
-        })
+        # Publish event (dummy)
+        # redis_client.publish_email_event('email_deleted', {
+        #     'email_id': email_id,
+        #     'timestamp': datetime.utcnow().isoformat()
+        # })
         
         return jsonify({"success": True, "message": "Email deleted"})
         
@@ -409,14 +430,14 @@ def batch_operations():
         
         # Invalidate cache for all updated emails
         for uid in updated_emails:
-            redis_client.invalidate_email_cache('default', uid)
+            cache.delete(f"email:{uid}")
         
-        # Publish event
-        redis_client.publish_email_event('batch_operation', {
-            'operation': operation,
-            'email_ids': updated_emails,
-            'timestamp': datetime.utcnow().isoformat()
-        })
+        # Publish event (dummy)
+        # redis_client.publish_email_event('batch_operation', {
+        #     'operation': operation,
+        #     'email_ids': updated_emails,
+        #     'timestamp': datetime.utcnow().isoformat()
+        # })
         
         return jsonify({
             "success": True, 
@@ -429,74 +450,34 @@ def batch_operations():
         return jsonify({"error": str(e)}), 500
 
 # Webhook and Sync Endpoints
+from flask import current_app
+
 @app.route('/api/sync', methods=['POST'])
 def trigger_sync():
     """Trigger email synchronization"""
     try:
-        # Run sync directly using the sync service
-        result = email_sync_service.sync_emails(limit=100)
-        
-        return jsonify({
-            "success": True,
-            "message": "Email sync completed",
-            "result": result
-        })
+        task_manager.add_task(sync_emails_task, current_app._get_current_object(), limit=100)
+        return jsonify({"success": True, "message": "Email sync triggered"})
         
     except Exception as e:
         logger.error(f"Error triggering sync: {e}")
         return jsonify({"error": "Failed to start sync"}), 500
 
-@app.route('/api/sync/status/<task_id>')
-def sync_status(task_id):
-    """Get sync task status"""
-    try:
-        from tasks import get_task_status
-        result = get_task_status(task_id)
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Error getting sync status: {e}")
-        return jsonify({"error": "Failed to get status"}), 500
 
 # Server-Sent Events for real-time updates
-@app.route('/api/events')
-def stream_events():
-    """Server-Sent Events endpoint for real-time updates"""
-    def event_stream():
-        pubsub = redis_client.subscribe(['email_events', 'imap_events', 'notifications'])
-        if not pubsub:
-            yield "data: {\"error\": \"Failed to subscribe to events\"}\n\n"
-            return
-        
-        try:
-            while True:
-                message = pubsub.get_message(timeout=1.0)
-                if message and message['type'] == 'message':
-                    try:
-                        data = json.loads(message['data'])
-                        yield f"data: {json.dumps(data)}\n\n"
-                    except json.JSONDecodeError:
-                        continue
-                else:
-                    # Send heartbeat
-                    yield "data: {\"type\": \"heartbeat\"}\n\n"
-                    
-        except Exception as e:
-            logger.error(f"SSE error: {e}")
-            yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
-        finally:
-            pubsub.close()
-    
-    return Response(
-        event_stream(),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': 'Cache-Control'
-        }
-    )
+@app.route('/api/events/long-poll')
+def long_poll_events():
+    """Long-polling endpoint for real-time updates"""
+    try:
+        event = imap_manager.get_new_email_event(timeout=30)
+        if event:
+            return jsonify(event)
+        else:
+            return jsonify({}), 204 # No Content
+    except Exception as e:
+        logger.error(f"Long-polling error: {e}")
+        return jsonify({"error": "Long-polling failed"}), 500
+
 
 # System Status and Health
 @app.route('/api/status')
@@ -512,11 +493,8 @@ def system_status():
             'timestamp': datetime.utcnow().isoformat()
         }
         
-        # Test Redis
-        try:
-            redis_client.ping()
-        except:
-            status['redis'] = 'disconnected'
+        # Test Redis (removed)
+        status['redis'] = 'removed'
         
         # Test database
         try:
@@ -593,13 +571,10 @@ def startup():
         # Start IMAP IDLE monitoring
         start_imap_idle()
         
-        # Run initial email sync
-        logger.info("Running initial email sync...")
-        result = email_sync_service.sync_emails(limit=50)
-        logger.info(f"Initial sync result: {result}")
-        
-        # Start background sync
-        email_sync_service.start_background_sync()
+        # Run initial email sync in a background thread
+        logger.info("Running initial email sync in background...")
+        sync_thread = threading.Thread(target=email_sync_service.sync_emails, kwargs={'limit': 50})
+        sync_thread.start()
         
         logger.info("VexMail application started successfully")
         
@@ -620,5 +595,7 @@ def shutdown_session(exception=None):
         logger.error(f"Shutdown error: {e}")
 
 if __name__ == '__main__':
+    # Start periodic tasks
+    start_periodic_tasks(app)
     # Run the Flask development server
     app.run(host='0.0.0.0', port=5000, debug=True)

@@ -15,7 +15,6 @@ import json
 from datetime import datetime
 import uuid
 
-from redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +167,7 @@ class IMAPManager:
         self.idle_thread: Optional[threading.Thread] = None
         self.idle_running = False
         self.idle_lock = threading.Lock()
+        self.new_email_queue = Queue()
         
         # Start cleanup thread
         self.cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
@@ -249,13 +249,14 @@ class IMAPManager:
     def _handle_new_email(self):
         """Handle new email notification"""
         try:
-            # Publish event to Redis
-            redis_client.publish_imap_event('new_email', {
+            event = {
+                'type': 'new_email',
                 'timestamp': datetime.utcnow().isoformat(),
                 'server': self.server,
                 'mailbox': self.mailbox
-            })
-            logger.info("New email detected via IDLE")
+            }
+            self.new_email_queue.put(event)
+            logger.info("New email detected via IDLE and added to queue")
         except Exception as e:
             logger.error(f"Error handling new email: {e}")
     
@@ -423,6 +424,13 @@ class IMAPManager:
         except Exception as e:
             logger.error(f"Error executing IMAP operation {operation_type} on {email_uid}: {e}")
             return False
+
+    def get_new_email_event(self, timeout: int = 30) -> Optional[Dict]:
+        """Get a new email event from the queue"""
+        try:
+            return self.new_email_queue.get(timeout=timeout)
+        except Empty:
+            return None
 
 # Global IMAP manager instance
 imap_manager = IMAPManager()

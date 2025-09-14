@@ -11,7 +11,6 @@ from decouple import config
 from flask import current_app
 from sqlalchemy.exc import IntegrityError
 from models import db, Email, EmailAttachment, User
-from redis_client import redis_client
 from imap_manager import imap_manager
 from email_parser import email_parser
 from storage_client import storage_client
@@ -43,39 +42,43 @@ class EmailSyncService:
     
     def get_cached_emails(self, page: int = 1, per_page: int = 20) -> Optional[Dict]:
         """Get emails from Redis cache"""
+        from app import cache
         try:
             cache_key = f"{self.list_cache_prefix}page:{page}:per_page:{per_page}"
-            cached_data = redis_client.get(cache_key)
+            cached_data = cache.get(cache_key)
             if cached_data:
-                return json.loads(cached_data)
+                return cached_data
         except Exception as e:
             logger.error(f"Error getting cached emails: {e}")
         return None
     
     def cache_emails(self, emails_data: Dict, page: int = 1, per_page: int = 20, expire: int = 300):
         """Cache emails list in Redis"""
+        from app import cache
         try:
             cache_key = f"{self.list_cache_prefix}page:{page}:per_page:{per_page}"
-            redis_client.set(cache_key, json.dumps(emails_data), expire=expire)
+            cache.set(cache_key, emails_data, timeout=expire)
         except Exception as e:
             logger.error(f"Error caching emails: {e}")
     
     def get_cached_email_detail(self, email_id: str) -> Optional[Dict]:
         """Get email detail from Redis cache"""
+        from app import cache
         try:
             cache_key = f"{self.cache_prefix}detail:{email_id}"
-            cached_data = redis_client.get(cache_key)
+            cached_data = cache.get(cache_key)
             if cached_data:
-                return json.loads(cached_data)
+                return cached_data
         except Exception as e:
             logger.error(f"Error getting cached email detail: {e}")
         return None
     
     def cache_email_detail(self, email_id: str, email_data: Dict, expire: int = 3600):
         """Cache email detail in Redis"""
+        from app import cache
         try:
             cache_key = f"{self.cache_prefix}detail:{email_id}"
-            redis_client.set(cache_key, json.dumps(email_data), expire=expire)
+            cache.set(cache_key, email_data, timeout=expire)
         except Exception as e:
             logger.error(f"Error caching email detail: {e}")
     
@@ -206,10 +209,12 @@ class EmailSyncService:
                     
                     # Store attachment in local storage
                     if attachment_data.get('content'):
+                        import base64
+                        decoded_content = base64.b64decode(attachment_data['content'])
                         storage_result = storage_client.upload_attachment(
                             email_id=email_record.id,
                             filename=attachment_data.get('filename', 'unknown'),
-                            content=attachment_data['content'],
+                            content=decoded_content,
                             content_type=attachment_data.get('content_type', 'application/octet-stream'),
                             attachment_id=attachment_id
                         )
@@ -364,38 +369,21 @@ class EmailSyncService:
         """Get email detail with caching"""
         try:
             # Try cache first
-            cached_detail = self.get_cached_email_detail(email_id)
-            if cached_detail:
-                return cached_detail
+            email_data = self.get_cached_email_detail(email_id)
             
-            # Fetch from database
-            email = Email.query.get(email_id)
-            if not email:
-                return None
-            
-            email_data = {
-                "id": email.id,
-                "subject": email.subject,
-                "from": email.sender_name,
-                "email": email.sender_email,
-                "body": email.body,
-                "html_content": email.html_content,
-                "date": email.date.strftime("%b %d, %Y %I:%M %p") if email.date else '',
-                "is_read": email.is_read,
-                "is_flagged": email.is_flagged,
-                "is_starred": email.is_starred,
-                "priority": email.priority,
-                "size": email.size,
-                "attachment_count": email.attachment_count,
-                "thread_id": email.thread_id,
-                "cc": email.get_cc_list(),
-                "bcc": email.get_bcc_list(),
-                "is_suspicious": email.is_suspicious,
-                "suspicious_reasons": email.get_suspicious_reasons()
-            }
-            
-            # Cache the result
-            self.cache_email_detail(email_id, email_data)
+            if not email_data:
+                # Fetch from database
+                email = Email.query.get(email_id)
+                if not email:
+                    return None
+
+                email_data = email.to_dict()
+                # Cache the result
+                self.cache_email_detail(email_id, email_data)
+
+            # Always fetch attachments from DB to ensure they are up-to-date
+            attachments = EmailAttachment.query.filter_by(email_id=email_id).all()
+            email_data['attachments'] = [attachment.to_dict() for attachment in attachments]
             
             return email_data
             
@@ -405,12 +393,9 @@ class EmailSyncService:
     
     def invalidate_email_list_cache(self):
         """Invalidate email list cache"""
+        from app import cache
         try:
-            # Get all cache keys for email lists
-            pattern = f"{self.list_cache_prefix}*"
-            keys = redis_client.keys(pattern)
-            if keys:
-                redis_client.delete(*keys)
+            cache.clear()
         except Exception as e:
             logger.error(f"Error invalidating email list cache: {e}")
     
