@@ -230,8 +230,11 @@
                 <div class="flex items-center justify-between">
                     <div class="flex items-center space-x-4">
                         <input type="checkbox" id="select-all" class="rounded border-gray-300 text-yellow-500 focus:ring-yellow-500">
-                        <button id="refresh-btn" class="text-gray-600 hover:text-gray-900 p-2 rounded-lg hover:bg-gray-100 transition-colors">
+                        <button id="refresh-btn" class="text-gray-600 hover:text-gray-900 p-2 rounded-lg hover:bg-gray-100 transition-colors" title="Refresh emails">
                             <i class="fas fa-redo"></i>
+                        </button>
+                        <button id="sync-btn" class="text-blue-600 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors" title="Sync emails from server">
+                            <i class="fas fa-sync"></i>
                         </button>
                         <div class="hidden sm:flex items-center space-x-2" id="batch-actions">
                             <button id="mark-read-btn" class="text-sm text-gray-600 hover:text-gray-900 px-3 py-1 rounded-lg hover:bg-gray-100">
@@ -269,7 +272,10 @@
                             <div id="empty-state" class="hidden flex flex-col items-center justify-center py-12">
                                 <i class="fas fa-inbox text-6xl text-gray-300 mb-4"></i>
                                 <h3 class="text-lg font-medium text-gray-900 mb-2">No emails found</h3>
-                                <p class="text-gray-500">Your inbox is empty or there was an error loading emails.</p>
+                                <p class="text-gray-500 mb-4">Your inbox is empty or emails haven't been synced yet.</p>
+                                <button id="sync-empty-btn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors">
+                                    <i class="fas fa-sync mr-2"></i>Sync Emails
+                                </button>
                             </div>
                         </div>
                         
@@ -324,6 +330,9 @@
         let totalPages = 1;
         let totalEmails = 0;
         let perPage = 20;
+        let eventSource = null;
+        let isRealtimeEnabled = true;
+        let virtualScroll = null;
 
         // DOM elements
         const sidebarToggle = document.getElementById('sidebar-toggle');
@@ -589,6 +598,37 @@
             showToast('Refreshing emails...', 'warning');
         });
 
+        // Sync emails from server
+        document.getElementById('sync-btn').addEventListener('click', async () => {
+            await syncEmails();
+        });
+
+        // Sync emails from empty state
+        document.getElementById('sync-empty-btn').addEventListener('click', async () => {
+            await syncEmails();
+        });
+
+        // Sync emails function
+        async function syncEmails() {
+            try {
+                showToast('Syncing emails from server...', 'warning');
+                
+                const response = await fetch('/api/sync', { method: 'POST' });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showToast(`Sync completed: ${result.result.count} emails processed`, 'success');
+                    // Refresh the email list
+                    fetchEmails(currentPage);
+                } else {
+                    showToast('Sync failed: ' + result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Sync error:', error);
+                showToast('Failed to sync emails', 'error');
+            }
+        }
+
         // Search functionality
         searchInput.addEventListener('input', (e) => {
             const searchTerm = e.target.value.toLowerCase();
@@ -601,7 +641,7 @@
         });
 
         // Show email detail
-        function showEmailDetail(emailId) {
+        async function showEmailDetail(emailId) {
             const email = emails.find(e => e.id === emailId);
             if (!email) return;
             
@@ -610,6 +650,39 @@
             // Mark as read when opened
             if (!email.is_read) {
                 markEmailAsRead(emailId, true);
+            }
+            
+            // Fetch full email details including HTML content
+            try {
+                const response = await fetch(`/api/email/${emailId}`);
+                const emailDetails = await response.json();
+                
+                if (response.ok) {
+                    // Update the email object with full details
+                    Object.assign(email, emailDetails);
+                    currentEmail = email;
+                }
+            } catch (error) {
+                console.error('Error fetching email details:', error);
+            }
+            
+            // Build CC/BCC display
+            let ccBccInfo = '';
+            if (email.cc && email.cc.length > 0) {
+                ccBccInfo += `<p class="text-sm text-gray-600">CC: ${email.cc.join(', ')}</p>`;
+            }
+            if (email.bcc && email.bcc.length > 0) {
+                ccBccInfo += `<p class="text-sm text-gray-600">BCC: ${email.bcc.join(', ')}</p>`;
+            }
+            
+            // Format email content
+            let emailContent = 'No content available';
+            if (email.html_content) {
+                // For HTML content, we need to be careful about XSS
+                emailContent = email.html_content;
+            } else if (email.body) {
+                // For plain text, convert line breaks to HTML
+                emailContent = email.body.replace(/\n/g, '<br>').replace(/\r/g, '');
             }
             
             const detailHTML = `
@@ -623,17 +696,25 @@
                                 <div>
                                     <h2 class="text-lg sm:text-xl font-bold text-gray-900">${email.subject || '(No Subject)'}</h2>
                                     <p class="text-gray-600 text-sm">From: ${email.from} &lt;${email.email}&gt;</p>
+                                    ${ccBccInfo}
                                     <p class="text-sm text-gray-500">${email.date}</p>
+                                    ${email.priority && email.priority !== 'normal' ? `<span class="inline-block px-2 py-1 text-xs font-medium rounded-full ${email.priority === 'high' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}">${email.priority.toUpperCase()}</span>` : ''}
                                 </div>
                             </div>
                             <div class="flex space-x-2">
-                                <button class="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100">
+                                <button class="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100" title="Reply">
                                     <i class="fas fa-reply"></i>
                                 </button>
-                                <button class="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100">
+                                <button class="p-2 text-gray-600 hover:text-gray-900 rounded-lg hover:bg-gray-100" title="Forward">
                                     <i class="fas fa-forward"></i>
                                 </button>
-                                <button class="p-2 text-red-600 hover:text-red-700 rounded-lg hover:bg-red-50" onclick="deleteEmail('${email.id}')">
+                                <button class="p-2 ${email.is_starred ? 'text-yellow-500' : 'text-gray-600'} hover:text-gray-900 rounded-lg hover:bg-gray-100" title="Star" onclick="toggleStar('${email.id}')">
+                                    <i class="fas fa-star"></i>
+                                </button>
+                                <button class="p-2 ${email.is_flagged ? 'text-red-500' : 'text-gray-600'} hover:text-gray-900 rounded-lg hover:bg-gray-100" title="Flag" onclick="toggleFlag('${email.id}')">
+                                    <i class="fas fa-flag"></i>
+                                </button>
+                                <button class="p-2 text-red-600 hover:text-red-700 rounded-lg hover:bg-red-50" title="Delete" onclick="deleteEmail('${email.id}')">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </div>
@@ -641,7 +722,9 @@
                     </div>
                     <div class="flex-1 p-6 overflow-y-auto">
                         <div class="prose max-w-none">
-                            <div class="whitespace-pre-wrap text-gray-800 leading-relaxed text-sm sm:text-base">${email.body}</div>
+                            <div class="email-content-body text-gray-800 leading-relaxed text-sm sm:text-base">
+                                ${emailContent}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -649,6 +732,62 @@
             
             emailDetail.innerHTML = detailHTML;
             defaultDetail.classList.add('hidden');
+        }
+
+        // Toggle star (for detail view)
+        async function toggleStar(uid) {
+            try {
+                const response = await fetch(`/api/emails/${uid}/star`, { method: 'POST' });
+                
+                if (response.ok) {
+                    const email = emails.find(e => e.id === uid);
+                    if (email) {
+                        email.is_starred = !email.is_starred;
+                        renderEmailList();
+                        updateCounts();
+                        
+                        // Update the detail view if it's currently showing this email
+                        if (currentEmail && currentEmail.id === uid) {
+                            showEmailDetail(uid);
+                        }
+                        
+                        showToast(`Email ${email.is_starred ? 'starred' : 'unstarred'}`);
+                    }
+                } else {
+                    throw new Error('Failed to update email star status');
+                }
+            } catch (error) {
+                console.error('Error starring email:', error);
+                showToast('Failed to update email star status', 'error');
+            }
+        }
+
+        // Toggle flag (for detail view)
+        async function toggleFlag(uid) {
+            try {
+                const response = await fetch(`/api/emails/${uid}/flag`, { method: 'POST' });
+                
+                if (response.ok) {
+                    const email = emails.find(e => e.id === uid);
+                    if (email) {
+                        email.is_flagged = !email.is_flagged;
+                        renderEmailList();
+                        updateCounts();
+                        
+                        // Update the detail view if it's currently showing this email
+                        if (currentEmail && currentEmail.id === uid) {
+                            showEmailDetail(uid);
+                        }
+                        
+                        showToast(`Email ${email.is_flagged ? 'flagged' : 'unflagged'}`);
+                    }
+                } else {
+                    throw new Error('Failed to update email flag status');
+                }
+            } catch (error) {
+                console.error('Error flagging email:', error);
+                showToast('Failed to update email flag status', 'error');
+            }
         }
 
         // Update counts
@@ -659,8 +798,279 @@
             lastUpdated.textContent = 'Just now';
         }
 
-        // Initial load
-        fetchEmails(1);
+        // Real-time updates with Server-Sent Events
+        function initRealtimeUpdates() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource('/api/events');
+            
+            eventSource.onopen = function() {
+                console.log('Real-time connection established');
+                showToast('Real-time updates connected', 'success');
+            };
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleRealtimeEvent(data);
+                } catch (e) {
+                    console.error('Error parsing SSE data:', e);
+                }
+            };
+            
+            eventSource.onerror = function(event) {
+                console.error('SSE connection error:', event);
+                showToast('Real-time connection lost', 'warning');
+                
+                // Attempt to reconnect after 5 seconds
+                setTimeout(() => {
+                    if (isRealtimeEnabled) {
+                        initRealtimeUpdates();
+                    }
+                }, 5000);
+            };
+        }
+        
+        function handleRealtimeEvent(event) {
+            switch (event.type) {
+                case 'email_received':
+                    handleNewEmail(event.data);
+                    break;
+                case 'email_read':
+                case 'email_unread':
+                    handleEmailStatusChange(event.data);
+                    break;
+                case 'email_deleted':
+                    handleEmailDeleted(event.data);
+                    break;
+                case 'batch_operation':
+                    handleBatchOperation(event.data);
+                    break;
+                case 'heartbeat':
+                    // Keep connection alive
+                    break;
+                default:
+                    console.log('Unknown event type:', event.type);
+            }
+        }
+        
+        function handleNewEmail(emailData) {
+            // Add new email to the beginning of the list
+            const newEmail = {
+                id: emailData.email_id,
+                subject: emailData.subject,
+                from: emailData.from,
+                body: '',
+                date: new Date().toLocaleString(),
+                preview: '',
+                is_read: false
+            };
+            
+            emails.unshift(newEmail);
+            
+            // Update UI
+            renderEmailList();
+            updateCounts();
+            
+            // Show notification
+            showToast(`New email from ${emailData.from}`, 'success');
+            
+            // Update inbox count with animation
+            const inboxCount = document.getElementById('inbox-count');
+            inboxCount.style.transform = 'scale(1.2)';
+            setTimeout(() => {
+                inboxCount.style.transform = 'scale(1)';
+            }, 200);
+        }
+        
+        function handleEmailStatusChange(data) {
+            const email = emails.find(e => e.id === data.email_id);
+            if (email) {
+                email.is_read = data.type === 'email_read';
+                renderEmailList();
+                updateCounts();
+            }
+        }
+        
+        function handleEmailDeleted(data) {
+            emails = emails.filter(e => e.id !== data.email_id);
+            renderEmailList();
+            updateCounts();
+            
+            if (currentEmail && currentEmail.id === data.email_id) {
+                showDefaultDetail();
+            }
+        }
+        
+        function handleBatchOperation(data) {
+            // Refresh the email list to show batch changes
+            fetchEmails(currentPage);
+            showToast(`Batch ${data.operation} completed`, 'success');
+        }
+        
+        function showDefaultDetail() {
+            const defaultDetail = document.getElementById('default-detail');
+            defaultDetail.classList.remove('hidden');
+            
+            const emailDetail = document.getElementById('email-detail');
+            emailDetail.innerHTML = `
+                <div id="default-detail" class="email-content flex-1 flex items-center justify-center">
+                    <div class="text-center">
+                        <i class="fas fa-envelope-open text-6xl text-gray-300 mb-4"></i>
+                        <h3 class="text-lg font-medium text-gray-900 mb-2">Select an email</h3>
+                        <p class="text-gray-500">Choose an email from the list to view its contents.</p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Virtual scrolling implementation (simplified)
+        function initVirtualScroll() {
+            const container = document.getElementById('email-list');
+            const containerHeight = container.clientHeight;
+            const itemHeight = 80; // Approximate height of each email item
+            
+            function updateVisibleItems() {
+                const scrollTop = container.scrollTop;
+                const startIndex = Math.floor(scrollTop / itemHeight);
+                const endIndex = Math.min(startIndex + Math.ceil(containerHeight / itemHeight), emails.length);
+                
+                // Only render visible items for better performance
+                const visibleEmails = emails.slice(startIndex, endIndex);
+                renderEmailList(visibleEmails);
+            }
+            
+            container.addEventListener('scroll', updateVisibleItems);
+            updateVisibleItems();
+        }
+        
+        // Enhanced search with debouncing
+        let searchTimeout;
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                const searchTerm = e.target.value.toLowerCase().trim();
+                
+                if (searchTerm === '') {
+                    renderEmailList(emails);
+                    return;
+                }
+                
+                // Use API search for better results
+                fetch(`/api/emails/search?q=${encodeURIComponent(searchTerm)}&page=1&per_page=100`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.emails) {
+                            renderEmailList(data.emails);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Search error:', error);
+                        // Fallback to client-side search
+                        const filteredEmails = emails.filter(email => 
+                            email.subject.toLowerCase().includes(searchTerm) ||
+                            email.from.toLowerCase().includes(searchTerm) ||
+                            email.body.toLowerCase().includes(searchTerm)
+                        );
+                        renderEmailList(filteredEmails);
+                    });
+            }, 300);
+        });
+        
+        // Enhanced keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+                return;
+            }
+            
+            switch (e.key) {
+                case 'r':
+                    if (e.ctrlKey || e.metaKey) {
+                        e.preventDefault();
+                        fetchEmails(currentPage);
+                        showToast('Refreshing emails...', 'warning');
+                    }
+                    break;
+                case 'Escape':
+                    selectedEmails.clear();
+                    renderEmailList();
+                    updateBatchActions();
+                    break;
+                case 'a':
+                    if (e.ctrlKey || e.metaKey) {
+                        e.preventDefault();
+                        selectAll.checked = !selectAll.checked;
+                        selectAll.dispatchEvent(new Event('change'));
+                    }
+                    break;
+            }
+        });
+        
+        // System status monitoring
+        function checkSystemStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(status => {
+                    const statusIndicator = document.createElement('div');
+                    statusIndicator.className = 'fixed bottom-4 right-4 p-2 rounded-lg shadow-lg text-xs';
+                    
+                    const allConnected = Object.values(status).every(s => s === 'connected');
+                    if (allConnected) {
+                        statusIndicator.className += ' bg-green-500 text-white';
+                        statusIndicator.textContent = 'All systems online';
+                    } else {
+                        statusIndicator.className += ' bg-red-500 text-white';
+                        statusIndicator.textContent = 'Some systems offline';
+                    }
+                    
+                    // Remove existing indicator
+                    const existing = document.querySelector('.status-indicator');
+                    if (existing) existing.remove();
+                    
+                    statusIndicator.classList.add('status-indicator');
+                    document.body.appendChild(statusIndicator);
+                    
+                    setTimeout(() => {
+                        if (statusIndicator.parentNode) {
+                            statusIndicator.remove();
+                        }
+                    }, 3000);
+                })
+                .catch(error => {
+                    console.error('Status check failed:', error);
+                });
+        }
+        
+        // Initialize application
+        function init() {
+            // Start real-time updates
+            initRealtimeUpdates();
+            
+            // Initial email load
+            fetchEmails(1);
+            
+            // Check system status
+            checkSystemStatus();
+            setInterval(checkSystemStatus, 30000); // Check every 30 seconds
+            
+            // Initialize virtual scroll if needed
+            if (emails.length > 100) {
+                initVirtualScroll();
+            }
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            isRealtimeEnabled = false;
+            if (eventSource) {
+                eventSource.close();
+            }
+        });
+        
+        // Start the application
+        init();
     </script>
 </body>
 </html>

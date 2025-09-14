@@ -1,4 +1,10 @@
 Flask==2.3.3
+Flask-CORS==4.0.0
 python-decouple==3.8
 Flask-SQLAlchemy==3.0.5
 Flask-Migrate==4.0.5
+redis==5.0.1
+celery==5.3.4
+rq==1.15.1
+python-dotenv==1.0.0
+gunicorn==21.2.0

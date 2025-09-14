@@ -1,129 +1,179 @@
-# VexMail - Flask + IMAP Email Client
+# VexMail
 
-A modern, responsive email client built with Flask and IMAP, featuring read/unread status management, email deletion, and mobile-optimized UI.
+A modern, scalable email client built with Flask, featuring real-time updates, IMAP IDLE support, and a robust microservices architecture.
+
+## Architecture Overview
+
+VexMail implements a comprehensive email management system with the following components:
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   IMAP Providers│    │  Flask Backend   │    │  Realtime & Queue│
+│                 │    │                  │    │                 │
+│ Gmail/Office365 │◄──►│ IMAP Manager     │◄──►│ Redis Cache     │
+│ Custom IMAP     │    │ Webhook/REST API │    │ Celery/RQ       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                │                         │
+                                ▼                         ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Durable Storage│    │  Workers & Proc  │    │    Frontend     │
+│                  │    │                  │    │                 │
+│ PostgreSQL      │◄──►│ Email Parser     │◄──►│ SPA (Virtual    │
+│ S3/MinIO        │    │ Background Jobs  │    │  Scroll)        │
+│ Retry Queue     │    │ Notifications    │    │ Real-time UI    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
 
 ## Features
 
-- 📧 **IMAP Email Integration** - Connect to any IMAP server
-- 📱 **Mobile Responsive** - Optimized for mobile and desktop
-- ✅ **Read/Unread Management** - Mark emails as read/unread with optimistic updates
-- 🗑️ **Email Deletion** - Delete emails with confirmation
-- 🔄 **Batch Operations** - Select multiple emails for bulk actions
-- 💾 **Local Caching** - Fast UI with local database caching
-- 🔄 **Background Sync** - Automatic retry queue for failed operations
-- 🎨 **Modern UI** - Clean, intuitive interface with Tailwind CSS
+### Core Features
+- **Real-time Email Sync**: IMAP IDLE support for instant email notifications
+- **Modern Web Interface**: Responsive SPA with virtual scrolling for large inboxes
+- **Advanced Search**: Full-text search across emails with debounced input
+- **Batch Operations**: Select multiple emails for bulk actions
+- **Attachment Management**: Secure attachment storage with virus scanning
+- **Email Threading**: Intelligent conversation grouping
 
-## Setup
+### Technical Features
+- **Connection Pooling**: Efficient IMAP connection management
+- **Background Processing**: Celery workers for async operations
+- **Caching**: Redis-based caching for improved performance
+- **Event Streaming**: Server-Sent Events for real-time updates
+- **Error Handling**: Comprehensive error tracking and retry mechanisms
+- **Monitoring**: Health checks and performance metrics
+- **Docker Support**: Complete containerized deployment
 
-### 1. Install Dependencies
+## Quick Start
 
-```bash
-pip install -r requirements.txt
+### Using Docker Compose (Recommended)
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd vexmail
+   ```
+
+2. **Configure environment**
+   ```bash
+   cp env.example .env
+   # Edit .env with your IMAP credentials and settings
+   ```
+
+3. **Start all services**
+   ```bash
+   docker-compose up -d
+   ```
+
+4. **Access the application**
+   - Web Interface: http://localhost:5000
+   - Flower (Celery Monitor): http://localhost:5555
+   - MinIO Console: http://localhost:9001
+
+### Manual Installation
+
+1. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Set up services**
+   - PostgreSQL database
+   - Redis server
+   - MinIO or AWS S3 for storage
+
+3. **Configure environment**
+   ```bash
+   cp env.example .env
+   # Edit .env with your configuration
+   ```
+
+4. **Run database migrations**
+   ```bash
+   python -c "from app import app, db; app.app_context().push(); db.create_all()"
+   ```
+
+5. **Start the application**
+   ```bash
+   python app.py
+   ```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@localhost/vexmail` |
+| `REDIS_URL` | Redis connection string | `redis://localhost:6379/0` |
+| `IMAP_SERVER` | IMAP server hostname | Required |
+| `EMAIL_USER` | Email username | Required |
+| `EMAIL_PASS` | Email password/app password | Required |
+| `STORAGE_PROVIDER` | Storage provider (s3/minio) | `minio` |
+| `STORAGE_ENDPOINT_URL` | Storage endpoint URL | `http://localhost:9000` |
+| `SECRET_KEY` | Flask secret key | Change in production |
+
+### IMAP Configuration
+
+#### Gmail
+```
+IMAP_SERVER=imap.gmail.com
+EMAIL_USER=your-email@gmail.com
+EMAIL_PASS=your-app-password
 ```
 
-### 2. Environment Configuration
-
-Create a `.env` file in the project root:
-
-```env
-IMAP_SERVER=your-imap-server.com
-EMAIL_USER=your-email@domain.com
+#### Office 365
+```
+IMAP_SERVER=outlook.office365.com
+EMAIL_USER=your-email@company.com
 EMAIL_PASS=your-password
 ```
 
-### 3. Run the Application
-
-```bash
-python app.py
+#### Custom IMAP
+```
+IMAP_SERVER=your-imap-server.com
+EMAIL_USER=your-username
+EMAIL_PASS=your-password
+IMAP_MAILBOX=INBOX
 ```
 
-The application will be available at `http://localhost:5000`
+## API Documentation
 
-## API Endpoints
+### Authentication
+Currently, VexMail uses a single-user model. Multi-user support can be added by implementing proper authentication.
 
-### Email Management
+### Endpoints
 
-- `GET /api/emails` - Get all emails
-- `GET /api/emails/<email_id>` - Get specific email details
-- `POST /api/emails/<email_id>/read` - Mark email as read
-- `POST /api/emails/<email_id>/unread` - Mark email as unread
-- `DELETE /api/emails/<email_id>` - Delete email
+#### Email Management
+- `GET /api/emails` - List emails with pagination
+- `GET /api/emails/search` - Search emails
+- `GET /api/email/<id>` - Get email details
+- `POST /api/emails/<id>/read` - Mark as read
+- `POST /api/emails/<id>/unread` - Mark as unread
+- `POST /api/emails/<id>/flag` - Flag/unflag email
+- `POST /api/emails/<id>/star` - Star/unstar email
+- `DELETE /api/emails/<id>` - Delete email
+- `POST /api/emails/batch` - Batch operations
 
-### Batch Operations
+#### Attachments
+- `GET /api/email/<id>/attachments` - List email attachments
+- `GET /api/attachment/<id>/download` - Download attachment
 
-- `POST /api/emails/batch` - Batch operations on multiple emails
-  ```json
-  {
-    "operation": "read|unread|delete",
-    "uids": ["1", "2", "3"]
-  }
-  ```
+#### System
+- `GET /api/status` - System health status
+- `GET /api/stats` - System statistics
+- `POST /api/sync` - Trigger email sync
+- `GET /api/events` - Server-Sent Events stream
 
-## Database Schema
+### Real-time Events
 
-### Email Table
-- `id` (String) - IMAP UID (Primary Key)
-- `uid_validity` (String) - IMAP UIDVALIDITY
-- `subject` (String) - Email subject
-- `sender_name` (String) - Sender display name
-- `sender_email` (String) - Sender email address
-- `body` (Text) - Email body content
-- `date` (DateTime) - Email date
-- `is_read` (Boolean) - Read status
-- `is_deleted` (Boolean) - Deletion status
-- `created_at` (DateTime) - Record creation time
-- `updated_at` (DateTime) - Record update time
+The `/api/events` endpoint provides real-time updates via Server-Sent Events:
 
-### EmailOperation Table
-- `id` (String) - Operation ID (Primary Key)
-- `email_uid` (String) - Email UID
-- `operation_type` (String) - Operation type (read/unread/delete)
-- `status` (String) - Operation status (pending/success/failed)
-- `retry_count` (Integer) - Number of retry attempts
-- `max_retries` (Integer) - Maximum retry attempts
-- `created_at` (DateTime) - Operation creation time
-- `last_retry` (DateTime) - Last retry time
-
-## IMAP Operations
-
-### Read/Unread Status
-```bash
-# Mark as read
-UID STORE <uid> +FLAGS (\Seen)
-
-# Mark as unread
-UID STORE <uid> -FLAGS (\Seen)
-```
-
-### Email Deletion
-```bash
-# Mark as deleted
-UID STORE <uid> +FLAGS (\Deleted)
-EXPUNGE
-```
-
-## Mobile Features
-
-- **Swipe Actions** - Swipe left on emails to reveal action buttons
-- **Touch Optimized** - Large touch targets and intuitive gestures
-- **Responsive Design** - Adapts to different screen sizes
-- **Mobile Search** - Dedicated mobile search overlay
-- **Modal Email View** - Full-screen email viewing on mobile
-
-## Error Handling & Retry Logic
-
-1. **Optimistic Updates** - UI updates immediately for better UX
-2. **Operation Queue** - Failed operations are queued for retry
-3. **Exponential Backoff** - Retry with increasing delays
-4. **Background Processing** - Operations processed in background thread
-5. **Reconciliation** - Sync with IMAP server on failures
-
-## Testing
-
-Run the test script to verify functionality:
-
-```bash
-python test.py
+```javascript
+const eventSource = new EventSource('/api/events');
+eventSource.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    // Handle: email_received, email_read, email_deleted, etc.
+};
 ```
 
 ## Development
@@ -131,53 +181,131 @@ python test.py
 ### Project Structure
 ```
 vexmail/
-├── app.py              # Main Flask application
-├── models.py           # Database models
-├── mail.py             # IMAP utilities
+├── app.py                 # Main Flask application
+├── models.py              # Database models
+├── redis_client.py        # Redis cache and pub/sub
+├── imap_manager.py        # IMAP connection management
+├── email_parser.py        # Email parsing and sanitization
+├── storage_client.py      # S3/MinIO storage client
+├── tasks.py               # Celery background tasks
+├── celery_config.py       # Celery configuration
+├── monitoring.py          # Error handling and monitoring
 ├── templates/
-│   └── index.html      # Main UI template
-├── requirements.txt    # Python dependencies
-├── test.py            # API test script
-└── README.md          # This file
+│   └── index.html         # Frontend SPA
+├── requirements.txt       # Python dependencies
+├── Dockerfile            # Container configuration
+├── docker-compose.yml    # Multi-service deployment
+└── README.md            # This file
 ```
 
-### Key Components
+### Running Tests
+```bash
+# Install test dependencies
+pip install pytest pytest-flask
 
-1. **Database Layer** - SQLAlchemy models for local caching
-2. **IMAP Layer** - Connection and operation management
-3. **API Layer** - RESTful endpoints for email operations
-4. **UI Layer** - Responsive frontend with JavaScript
-5. **Background Queue** - Async operation processing
+# Run tests
+pytest
+```
+
+### Code Style
+```bash
+# Install linting tools
+pip install flake8 black
+
+# Format code
+black .
+
+# Lint code
+flake8 .
+```
+
+## Deployment
+
+### Production Considerations
+
+1. **Security**
+   - Use strong `SECRET_KEY`
+   - Enable HTTPS
+   - Configure firewall rules
+   - Use environment variables for secrets
+
+2. **Performance**
+   - Configure Redis persistence
+   - Set up database connection pooling
+   - Use CDN for static assets
+   - Enable gzip compression
+
+3. **Monitoring**
+   - Set up log aggregation
+   - Configure health check endpoints
+   - Monitor system resources
+   - Set up alerting
+
+### Scaling
+
+VexMail is designed to scale horizontally:
+
+- **Web Servers**: Multiple Flask instances behind a load balancer
+- **Workers**: Scale Celery workers based on load
+- **Database**: Read replicas for read-heavy workloads
+- **Storage**: S3 with CloudFront for global distribution
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **IMAP Connection Failed**
-   - Verify IMAP server settings
-   - Check email credentials
-   - Ensure IMAP is enabled on your email provider
+   - Check credentials and server settings
+   - Ensure IMAP is enabled on your email account
+   - Use app passwords for Gmail
 
-2. **Database Errors**
-   - Delete `vexmail.db` to reset database
-   - Check file permissions
+2. **Redis Connection Error**
+   - Verify Redis is running
+   - Check connection string in environment
 
-3. **Mobile Responsiveness Issues**
-   - Clear browser cache
-   - Test on different devices
+3. **Database Connection Issues**
+   - Ensure PostgreSQL is running
+   - Check database credentials
+   - Verify database exists
+
+4. **Storage Errors**
+   - Check MinIO/S3 configuration
+   - Verify bucket exists and is accessible
+   - Check storage credentials
 
 ### Logs
 
-Check console output for detailed error messages and operation status.
+View logs for each service:
+```bash
+# Web application
+docker-compose logs web
+
+# Celery worker
+docker-compose logs worker
+
+# All services
+docker-compose logs -f
+```
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Test thoroughly
+4. Add tests
 5. Submit a pull request
 
 ## License
 
-This project is licensed under the MIT License. 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+For issues and questions:
+- Create an issue on GitHub
+- Check the troubleshooting section
+- Review the API documentation
+
+---
+
+**VexMail** - Modern email management made simple.
