@@ -6,6 +6,7 @@
     <title>VexMail - Email Client</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@2.4.0/dist/purify.min.js"></script>
     <style>
         :root {
             --primary: #FFBB39;
@@ -299,6 +300,9 @@
                             </div>
                         </div>
                     </div>
+                    <div class="border-t border-gray-200 p-6" id="attachments-section">
+                        <!-- Attachments will be rendered here -->
+                    </div>
 
                     <!-- Email Detail Panel -->
                     <div class="hidden lg:block lg:w-1/2 p-4">
@@ -389,9 +393,12 @@
         }
 
         // Fetch emails from API with pagination
-        async function fetchEmails(page = 1) {
+        async function fetchEmails(page = 1, silent = false) {
             try {
                 currentPage = page;
+                if (!silent) {
+                    loading.classList.remove('hidden');
+                }
                 const response = await fetch(`/api/emails?page=${page}&per_page=${perPage}`);
                 const data = await response.json();
                 
@@ -399,7 +406,9 @@
                 totalEmails = data.pagination.total;
                 totalPages = data.pagination.pages;
                 
-                loading.classList.add('hidden');
+                if (!silent) {
+                    loading.classList.add('hidden');
+                }
                 
                 if (emails.length === 0) {
                     emptyState.classList.remove('hidden');
@@ -412,9 +421,11 @@
                 }
             } catch (error) {
                 console.error('Error fetching emails:', error);
-                loading.classList.add('hidden');
-                emptyState.classList.remove('hidden');
-                showToast('Failed to load emails', 'error');
+                if (!silent) {
+                    loading.classList.add('hidden');
+                    emptyState.classList.remove('hidden');
+                    showToast('Failed to load emails', 'error');
+                }
             }
         }
 
@@ -678,8 +689,8 @@
             // Format email content
             let emailContent = 'No content available';
             if (email.html_content) {
-                // For HTML content, we need to be careful about XSS
-                emailContent = email.html_content;
+                // Sanitize HTML content to prevent XSS
+                emailContent = DOMPurify.sanitize(email.html_content);
             } else if (email.body) {
                 // For plain text, convert line breaks to HTML
                 emailContent = email.body.replace(/\n/g, '<br>').replace(/\r/g, '');
@@ -732,6 +743,26 @@
             
             emailDetail.innerHTML = detailHTML;
             defaultDetail.classList.add('hidden');
+
+            // Render attachments
+            const attachmentsSection = document.getElementById('attachments-section');
+            if (email.attachments && email.attachments.length > 0) {
+                const attachmentsHTML = email.attachments.map(att => `
+                    <a href="/api/attachment/${att.id}/download" class="flex items-center space-x-2 p-2 rounded-lg hover:bg-gray-100" download>
+                        <i class="fas fa-paperclip text-gray-500"></i>
+                        <span class="text-sm font-medium text-gray-800">${att.filename}</span>
+                        <span class="text-xs text-gray-500">(${(att.size / 1024).toFixed(2)} KB)</span>
+                    </a>
+                `).join('');
+                attachmentsSection.innerHTML = `
+                    <h3 class="text-sm font-semibold text-gray-900 mb-2">Attachments (${email.attachments.length})</h3>
+                    <div class="space-y-2">
+                        ${attachmentsHTML}
+                    </div>
+                `;
+            } else {
+                attachmentsSection.style.display = 'none';
+            }
         }
 
         // Toggle star (for detail view)
@@ -798,39 +829,27 @@
             lastUpdated.textContent = 'Just now';
         }
 
-        // Real-time updates with Server-Sent Events
-        function initRealtimeUpdates() {
-            if (eventSource) {
-                eventSource.close();
-            }
-            
-            eventSource = new EventSource('/api/events');
-            
-            eventSource.onopen = function() {
-                console.log('Real-time connection established');
-                showToast('Real-time updates connected', 'success');
-            };
-            
-            eventSource.onmessage = function(event) {
+        // Long-polling for real-time updates
+        function initLongPolling() {
+            (async function poll() {
                 try {
-                    const data = JSON.parse(event.data);
-                    handleRealtimeEvent(data);
-                } catch (e) {
-                    console.error('Error parsing SSE data:', e);
-                }
-            };
-            
-            eventSource.onerror = function(event) {
-                console.error('SSE connection error:', event);
-                showToast('Real-time connection lost', 'warning');
-                
-                // Attempt to reconnect after 5 seconds
-                setTimeout(() => {
-                    if (isRealtimeEnabled) {
-                        initRealtimeUpdates();
+                    const response = await fetch('/api/events/long-poll');
+                    if (response.status === 200) {
+                        const event = await response.json();
+                        if (event.type === 'new_email') {
+                            showToast('New email detected! Refreshing...');
+                            fetchEmails(1); // Refresh the email list
+                        }
                     }
-                }, 5000);
-            };
+                } catch (error) {
+                    console.error('Long-polling error:', error);
+                    // Wait 5 seconds before trying again
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                } finally {
+                    // Make the next request immediately
+                    poll();
+                }
+            })();
         }
         
         function handleRealtimeEvent(event) {
@@ -1045,8 +1064,8 @@
         
         // Initialize application
         function init() {
-            // Start real-time updates
-            initRealtimeUpdates();
+            // Start long-polling for updates
+            initLongPolling();
             
             // Initial email load
             fetchEmails(1);
