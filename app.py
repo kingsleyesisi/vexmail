@@ -27,10 +27,10 @@ print("Importing email_parser")
 from email_parser import email_parser
 print("Importing storage_client")
 from storage_client import storage_client
-print("Importing email_sync_service")
-from email_sync_service import email_sync_service
-print("Importing background_tasks")
-from background_tasks import task_manager, start_periodic_tasks, sync_emails_task
+print("Importing services")
+from services.email_service import email_service
+from services.cache_service import cache_service
+from services.realtime_service import realtime_service
 print("Imports complete")
 
 # Configure logging
@@ -60,35 +60,14 @@ app.config['SECRET_KEY'] = config('SECRET_KEY', default='your-secret-key-here')
 db.init_app(app)
 migrate = Migrate(app, db)
 
-# Initialize caching
-from flask_caching import Cache
-app.config['CACHE_TYPE'] = 'FileSystemCache'
-app.config['CACHE_DIR'] = 'cache'
-cache = Cache(app)
-
-# Database tables will be created by init_db.py script
-
-# Background task management
-def start_imap_idle():
-    """Start IMAP IDLE monitoring"""
-    try:
-        imap_manager.start_idle()
-        logger.info("IMAP IDLE monitoring started")
-    except Exception as e:
-        logger.error(f"Failed to start IMAP IDLE: {e}")
-
-def stop_imap_idle():
-    """Stop IMAP IDLE monitoring"""
-    try:
-        imap_manager.stop_idle()
-        logger.info("IMAP IDLE monitoring stopped")
-    except Exception as e:
-        logger.error(f"Failed to stop IMAP IDLE: {e}")
-
-# Utility functions
-def get_emails_from_db(page, per_page, user_id='default'):
-    """Fetch emails from database with pagination and caching using sync service"""
-    return email_sync_service.get_emails_from_db(page, per_page)
+# Real-time client management
+@app.before_request
+def before_request():
+    """Register client for real-time updates"""
+    client_id = request.headers.get('X-Client-ID')
+    if not client_id and request.endpoint and 'api' in request.endpoint:
+        client_id = realtime_service.register_client()
+        g.client_id = client_id
 
 @app.route('/')
 def index():
@@ -101,16 +80,10 @@ def api_emails():
     """API endpoint to get emails with pagination"""
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
-    user_id = request.args.get('user_id', 'default')
+    force_refresh = request.args.get('force_refresh', False, type=bool)
     
-    result = get_emails_from_db(page, per_page, user_id)
+    result = email_service.get_emails_paginated(page, per_page, force_refresh)
     return jsonify(result)
-
-@app.route('/api/emails/all')
-def api_all_emails():
-    """API endpoint to get all emails (for backward compatibility)"""
-    result = get_emails_from_db(1, 1000)
-    return jsonify(result["emails"])
 
 @app.route('/api/emails/search')
 def api_search_emails():
@@ -123,30 +96,7 @@ def api_search_emails():
         if not query:
             return jsonify({"error": "Search query is required"}), 400
         
-        # Search in database
-        emails = Email.query.filter(
-            Email.is_deleted == False,
-            db.or_(
-                Email.subject.contains(query),
-                Email.sender_name.contains(query),
-                Email.sender_email.contains(query),
-                Email.body.contains(query)
-            )
-        ).order_by(Email.date.desc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
-        
-        result = {
-            "pagination": {
-                "total": emails.total,
-                "pages": emails.pages,
-                "current_page": emails.page,
-                "per_page": emails.per_page
-            },
-            "emails": [email.to_dict() for email in emails.items],
-            "query": query
-        }
-        
+        result = email_service.search_emails(query, page, per_page)
         return jsonify(result)
         
     except Exception as e:
@@ -157,7 +107,8 @@ def api_search_emails():
 def api_email_detail(email_id):
     """API endpoint to get specific email details"""
     try:
-        email_data = email_sync_service.get_email_detail(email_id)
+        force_refresh = request.args.get('force_refresh', False, type=bool)
+        email_data = email_service.get_email_detail(email_id, force_refresh)
         if email_data:
             return jsonify(email_data)
         return jsonify({"error": "Email not found"}), 404
@@ -225,35 +176,11 @@ def api_download_attachment(attachment_id):
 def mark_as_read(email_id):
     """Mark email as read"""
     try:
-        email = Email.query.get(email_id)
-        if not email:
+        success = email_service.update_email_status(email_id, {'is_read': True})
+        if success:
+            return jsonify({"success": True, "message": "Email marked as read"})
+        else:
             return jsonify({"error": "Email not found"}), 404
-        
-        # Optimistic update
-        email.is_read = True
-        db.session.commit()
-        
-        # Queue IMAP operation
-        operation = EmailOperation(
-            email_uid=email_id,
-            operation_type='read'
-        )
-        db.session.add(operation)
-        db.session.commit()
-        
-        # Invalidate cache
-        cache.delete(f"email:{email_id}")
-        
-        # Publish event (dummy)
-        # redis_client.publish_email_event('email_read', {
-        #     'email_id': email_id,
-        #     'timestamp': datetime.utcnow().isoformat()
-        # })
-        
-        return jsonify({"success": True, "email": {
-            "id": email.id,
-            "is_read": email.is_read
-        }})
         
     except Exception as e:
         logger.error(f"Error marking email as read: {e}")
@@ -263,35 +190,11 @@ def mark_as_read(email_id):
 def mark_as_unread(email_id):
     """Mark email as unread"""
     try:
-        email = Email.query.get(email_id)
-        if not email:
+        success = email_service.update_email_status(email_id, {'is_read': False})
+        if success:
+            return jsonify({"success": True, "message": "Email marked as unread"})
+        else:
             return jsonify({"error": "Email not found"}), 404
-        
-        # Optimistic update
-        email.is_read = False
-        db.session.commit()
-        
-        # Queue IMAP operation
-        operation = EmailOperation(
-            email_uid=email_id,
-            operation_type='unread'
-        )
-        db.session.add(operation)
-        db.session.commit()
-        
-        # Invalidate cache
-        cache.delete(f"email:{email_id}")
-        
-        # Publish event (dummy)
-        # redis_client.publish_email_event('email_unread', {
-        #     'email_id': email_id,
-        #     'timestamp': datetime.utcnow().isoformat()
-        # })
-        
-        return jsonify({"success": True, "email": {
-            "id": email.id,
-            "is_read": email.is_read
-        }})
         
     except Exception as e:
         logger.error(f"Error marking email as unread: {e}")
@@ -305,25 +208,12 @@ def flag_email(email_id):
         if not email:
             return jsonify({"error": "Email not found"}), 404
         
-        # Toggle flag status
-        email.is_flagged = not email.is_flagged
-        db.session.commit()
-        
-        # Queue IMAP operation
-        operation = EmailOperation(
-            email_uid=email_id,
-            operation_type='flag' if email.is_flagged else 'unflag'
-        )
-        db.session.add(operation)
-        db.session.commit()
-        
-        # Invalidate cache
-        cache.delete(f"email:{email_id}")
-        
-        return jsonify({"success": True, "email": {
-            "id": email.id,
-            "is_flagged": email.is_flagged
-        }})
+        new_flag_status = not email.is_flagged
+        success = email_service.update_email_status(email_id, {'is_flagged': new_flag_status})
+        if success:
+            return jsonify({"success": True, "is_flagged": new_flag_status})
+        else:
+            return jsonify({"error": "Email not found"}), 404
         
     except Exception as e:
         logger.error(f"Error flagging email: {e}")
@@ -337,17 +227,12 @@ def star_email(email_id):
         if not email:
             return jsonify({"error": "Email not found"}), 404
         
-        # Toggle star status
-        email.is_starred = not email.is_starred
-        db.session.commit()
-        
-        # Invalidate cache
-        cache.delete(f"email:{email_id}")
-        
-        return jsonify({"success": True, "email": {
-            "id": email.id,
-            "is_starred": email.is_starred
-        }})
+        new_star_status = not email.is_starred
+        success = email_service.update_email_status(email_id, {'is_starred': new_star_status})
+        if success:
+            return jsonify({"success": True, "is_starred": new_star_status})
+        else:
+            return jsonify({"error": "Email not found"}), 404
         
     except Exception as e:
         logger.error(f"Error starring email: {e}")
@@ -357,32 +242,11 @@ def star_email(email_id):
 def delete_email(email_id):
     """Delete email"""
     try:
-        email = Email.query.get(email_id)
-        if not email:
+        success = email_service.delete_email(email_id)
+        if success:
+            return jsonify({"success": True, "message": "Email deleted"})
+        else:
             return jsonify({"error": "Email not found"}), 404
-        
-        # Optimistic update
-        email.is_deleted = True
-        db.session.commit()
-        
-        # Queue IMAP operation
-        operation = EmailOperation(
-            email_uid=email_id,
-            operation_type='delete'
-        )
-        db.session.add(operation)
-        db.session.commit()
-        
-        # Invalidate cache
-        cache.delete(f"email:{email_id}")
-        
-        # Publish event (dummy)
-        # redis_client.publish_email_event('email_deleted', {
-        #     'email_id': email_id,
-        #     'timestamp': datetime.utcnow().isoformat()
-        # })
-        
-        return jsonify({"success": True, "message": "Email deleted"})
         
     except Exception as e:
         logger.error(f"Error deleting email: {e}")
@@ -449,35 +313,44 @@ def batch_operations():
         logger.error(f"Error in batch operation: {e}")
         return jsonify({"error": str(e)}), 500
 
-# Webhook and Sync Endpoints
-from flask import current_app
-
 @app.route('/api/sync', methods=['POST'])
 def trigger_sync():
     """Trigger email synchronization"""
     try:
-        task_manager.add_task(sync_emails_task, current_app._get_current_object(), limit=100)
-        return jsonify({"success": True, "message": "Email sync triggered"})
+        limit = request.json.get('limit', 50) if request.json else 50
+        result = email_service.sync_emails_from_server(limit)
+        return jsonify({"success": True, "result": result})
         
     except Exception as e:
         logger.error(f"Error triggering sync: {e}")
         return jsonify({"error": "Failed to start sync"}), 500
 
-
-# Server-Sent Events for real-time updates
-@app.route('/api/events/long-poll')
-def long_poll_events():
-    """Long-polling endpoint for real-time updates"""
+# Real-time Events
+@app.route('/api/realtime/register', methods=['POST'])
+def register_realtime_client():
+    """Register client for real-time updates"""
     try:
-        event = imap_manager.get_new_email_event(timeout=30)
+        client_id = realtime_service.register_client()
+        return jsonify({"client_id": client_id, "success": True})
+    except Exception as e:
+        logger.error(f"Error registering client: {e}")
+        return jsonify({"error": "Failed to register client"}), 500
+
+@app.route('/api/realtime/events/<client_id>')
+def get_realtime_events(client_id):
+    """Get real-time events for a client (long-polling)"""
+    try:
+        timeout = request.args.get('timeout', 30, type=int)
+        event = realtime_service.get_client_events(client_id, timeout)
+        
         if event:
             return jsonify(event)
         else:
-            return jsonify({}), 204 # No Content
+            return jsonify({"error": "Client not found"}), 404
+            
     except Exception as e:
-        logger.error(f"Long-polling error: {e}")
-        return jsonify({"error": "Long-polling failed"}), 500
-
+        logger.error(f"Error getting events for client {client_id}: {e}")
+        return jsonify({"error": "Failed to get events"}), 500
 
 # System Status and Health
 @app.route('/api/status')
@@ -486,15 +359,20 @@ def system_status():
     try:
         status = {
             'database': 'connected',
-            'redis': 'connected',
+            'cache': 'connected',
             'storage': 'connected',
             'imap': 'connected',
-            'celery': 'connected',
+            'realtime': 'connected',
             'timestamp': datetime.utcnow().isoformat()
         }
         
-        # Test Redis (removed)
-        status['redis'] = 'removed'
+        # Test cache
+        try:
+            cache_service.set('health_check', 'ok', ttl=60)
+            if cache_service.get('health_check') != 'ok':
+                status['cache'] = 'disconnected'
+        except:
+            status['cache'] = 'disconnected'
         
         # Test database
         try:
@@ -516,6 +394,14 @@ def system_status():
         except:
             status['imap'] = 'disconnected'
         
+        # Test real-time service
+        try:
+            realtime_stats = realtime_service.get_stats()
+            status['realtime'] = 'connected'
+            status['realtime_clients'] = realtime_stats['connected_clients']
+        except:
+            status['realtime'] = 'disconnected'
+        
         return jsonify(status)
         
     except Exception as e:
@@ -526,14 +412,12 @@ def system_status():
 def system_stats():
     """Get system statistics"""
     try:
+        email_stats = email_service.get_email_stats()
+        cache_stats = cache_service.get_stats()
+        realtime_stats = realtime_service.get_stats()
+        
         stats = {
-            'emails': {
-                'total': Email.query.count(),
-                'unread': Email.query.filter_by(is_read=False, is_deleted=False).count(),
-                'deleted': Email.query.filter_by(is_deleted=True).count(),
-                'flagged': Email.query.filter_by(is_flagged=True, is_deleted=False).count(),
-                'starred': Email.query.filter_by(is_starred=True, is_deleted=False).count()
-            },
+            'emails': email_stats,
             'operations': {
                 'pending': EmailOperation.query.filter_by(status='pending').count(),
                 'failed': EmailOperation.query.filter_by(status='failed').count(),
@@ -545,6 +429,8 @@ def system_stats():
                 'unsafe': EmailAttachment.query.filter_by(is_safe=False).count()
             },
             'storage': storage_client.get_storage_stats(),
+            'cache': cache_stats,
+            'realtime': realtime_stats,
             'timestamp': datetime.utcnow().isoformat()
         }
         
@@ -564,38 +450,19 @@ def internal_error(error):
     logger.error(f"Internal error: {error}")
     return jsonify({"error": "Internal server error"}), 500
 
-# Application startup
-def startup():
-    """Initialize application on startup"""
-    try:
-        # Start IMAP IDLE monitoring
-        start_imap_idle()
-        
-        # Run initial email sync in a background thread
-        logger.info("Running initial email sync in background...")
-        sync_thread = threading.Thread(target=email_sync_service.sync_emails, kwargs={'limit': 50})
-        sync_thread.start()
-        
-        logger.info("VexMail application started successfully")
-        
-    except Exception as e:
-        logger.error(f"Startup error: {e}")
-
-# Initialize startup when app starts
-with app.app_context():
-    startup()
-
-@app.teardown_appcontext
-def shutdown_session(exception=None):
-    """Clean up on shutdown"""
-    try:
-        stop_imap_idle()
-        logger.info("VexMail application shutdown complete")
-    except Exception as e:
-        logger.error(f"Shutdown error: {e}")
-
 if __name__ == '__main__':
-    # Start periodic tasks
-    start_periodic_tasks(app)
+    logger.info("Starting VexMail application...")
+    
+    # Start IMAP IDLE monitoring in background
+    def start_imap_monitoring():
+        try:
+            imap_manager.start_idle()
+            logger.info("IMAP IDLE monitoring started")
+        except Exception as e:
+            logger.error(f"Failed to start IMAP monitoring: {e}")
+    
+    imap_thread = threading.Thread(target=start_imap_monitoring, daemon=True)
+    imap_thread.start()
+    
     # Run the Flask development server
     app.run(host='0.0.0.0', port=5000, debug=True)

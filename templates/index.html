@@ -334,9 +334,10 @@
         let totalPages = 1;
         let totalEmails = 0;
         let perPage = 20;
-        let eventSource = null;
+        let realtimeClient = null;
         let isRealtimeEnabled = true;
         let virtualScroll = null;
+        let clientId = null;
 
         // DOM elements
         const sidebarToggle = document.getElementById('sidebar-toggle');
@@ -399,7 +400,10 @@
                 if (!silent) {
                     loading.classList.remove('hidden');
                 }
-                const response = await fetch(`/api/emails?page=${page}&per_page=${perPage}`);
+                
+                // Add cache busting parameter if needed
+                const forceRefresh = !silent && page === 1 ? '&force_refresh=true' : '';
+                const response = await fetch(`/api/emails?page=${page}&per_page=${perPage}${forceRefresh}`);
                 const data = await response.json();
                 
                 emails = data.emails;
@@ -419,6 +423,17 @@
                     updateCounts();
                     updatePagination();
                 }
+                
+                // Show cache info if available
+                if (data.cached_at && !silent) {
+                    const cacheTime = new Date(data.cached_at);
+                    const now = new Date();
+                    const ageMinutes = Math.floor((now - cacheTime) / 60000);
+                    if (ageMinutes > 0) {
+                        showToast(`Loaded from cache (${ageMinutes}m old)`, 'info');
+                    }
+                }
+                
             } catch (error) {
                 console.error('Error fetching emails:', error);
                 if (!silent) {
@@ -624,13 +639,19 @@
             try {
                 showToast('Syncing emails from server...', 'warning');
                 
-                const response = await fetch('/api/sync', { method: 'POST' });
+                const response = await fetch('/api/sync', { 
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ limit: 100 })
+                });
                 const result = await response.json();
                 
                 if (response.ok) {
                     showToast(`Sync completed: ${result.result.count} emails processed`, 'success');
                     // Refresh the email list
-                    fetchEmails(currentPage);
+                    fetchEmails(1, false); // Go to first page and force refresh
                 } else {
                     showToast('Sync failed: ' + result.error, 'error');
                 }
@@ -665,7 +686,7 @@
             
             // Fetch full email details including HTML content
             try {
-                const response = await fetch(`/api/email/${emailId}`);
+                const response = await fetch(`/api/email/${emailId}?force_refresh=false`);
                 const emailDetails = await response.json();
                 
                 if (response.ok) {
@@ -706,7 +727,7 @@
                                 </div>
                                 <div>
                                     <h2 class="text-lg sm:text-xl font-bold text-gray-900">${email.subject || '(No Subject)'}</h2>
-                                    <p class="text-gray-600 text-sm">From: ${email.from} &lt;${email.email}&gt;</p>
+                                    <p class="text-gray-600 text-sm">From: ${email.sender_name} <${email.sender_email}></p>
                                     ${ccBccInfo}
                                     <p class="text-sm text-gray-500">${email.date}</p>
                                     ${email.priority && email.priority !== 'normal' ? `<span class="inline-block px-2 py-1 text-xs font-medium rounded-full ${email.priority === 'high' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}">${email.priority.toUpperCase()}</span>` : ''}
@@ -760,6 +781,7 @@
                         ${attachmentsHTML}
                     </div>
                 `;
+                attachmentsSection.style.display = 'block';
             } else {
                 attachmentsSection.style.display = 'none';
             }
@@ -771,9 +793,10 @@
                 const response = await fetch(`/api/emails/${uid}/star`, { method: 'POST' });
                 
                 if (response.ok) {
+                    const result = await response.json();
                     const email = emails.find(e => e.id === uid);
                     if (email) {
-                        email.is_starred = !email.is_starred;
+                        email.is_starred = result.is_starred;
                         renderEmailList();
                         updateCounts();
                         
@@ -782,7 +805,7 @@
                             showEmailDetail(uid);
                         }
                         
-                        showToast(`Email ${email.is_starred ? 'starred' : 'unstarred'}`);
+                        showToast(`Email ${result.is_starred ? 'starred' : 'unstarred'}`);
                     }
                 } else {
                     throw new Error('Failed to update email star status');
@@ -799,9 +822,10 @@
                 const response = await fetch(`/api/emails/${uid}/flag`, { method: 'POST' });
                 
                 if (response.ok) {
+                    const result = await response.json();
                     const email = emails.find(e => e.id === uid);
                     if (email) {
-                        email.is_flagged = !email.is_flagged;
+                        email.is_flagged = result.is_flagged;
                         renderEmailList();
                         updateCounts();
                         
@@ -810,7 +834,7 @@
                             showEmailDetail(uid);
                         }
                         
-                        showToast(`Email ${email.is_flagged ? 'flagged' : 'unflagged'}`);
+                        showToast(`Email ${result.is_flagged ? 'flagged' : 'unflagged'}`);
                     }
                 } else {
                     throw new Error('Failed to update email flag status');
@@ -829,43 +853,65 @@
             lastUpdated.textContent = 'Just now';
         }
 
-        // Long-polling for real-time updates
-        function initLongPolling() {
+        // Real-time updates
+        async function initRealtimeUpdates() {
+            try {
+                // Register client
+                const response = await fetch('/api/realtime/register', { method: 'POST' });
+                const result = await response.json();
+                
+                if (result.success) {
+                    clientId = result.client_id;
+                    console.log('Registered for real-time updates:', clientId);
+                    
+                    // Start polling for events
+                    pollRealtimeEvents();
+                } else {
+                    console.error('Failed to register for real-time updates');
+                }
+            } catch (error) {
+                console.error('Error initializing real-time updates:', error);
+            }
+        }
+        
+        function pollRealtimeEvents() {
+            if (!clientId) return;
+            
             (async function poll() {
                 try {
-                    const response = await fetch('/api/events/long-poll');
-                    if (response.status === 200) {
+                    const response = await fetch(`/api/realtime/events/${clientId}?timeout=30`);
+                    if (response.ok) {
                         const event = await response.json();
-                        if (event.type === 'new_email') {
-                            showToast('New email detected! Refreshing...');
-                            fetchEmails(1); // Refresh the email list
-                        }
+                        handleRealtimeEvent(event);
                     }
                 } catch (error) {
-                    console.error('Long-polling error:', error);
+                    console.error('Real-time polling error:', error);
                     // Wait 5 seconds before trying again
                     await new Promise(resolve => setTimeout(resolve, 5000));
                 } finally {
-                    // Make the next request immediately
-                    poll();
+                    // Continue polling
+                    if (isRealtimeEnabled) {
+                        setTimeout(poll, 100); // Small delay to prevent tight loop
+                    }
                 }
             })();
         }
         
         function handleRealtimeEvent(event) {
+            if (!event || !event.type) return;
+            
             switch (event.type) {
                 case 'email_received':
                     handleNewEmail(event.data);
                     break;
-                case 'email_read':
-                case 'email_unread':
-                    handleEmailStatusChange(event.data);
+                case 'email_updated':
+                    handleEmailUpdated(event.data);
                     break;
                 case 'email_deleted':
                     handleEmailDeleted(event.data);
                     break;
-                case 'batch_operation':
-                    handleBatchOperation(event.data);
+                case 'sync_status':
+                    handleSyncStatus(event.data);
                     break;
                 case 'heartbeat':
                     // Keep connection alive
@@ -880,7 +926,8 @@
             const newEmail = {
                 id: emailData.email_id,
                 subject: emailData.subject,
-                from: emailData.from,
+                sender_name: emailData.sender,
+                sender_email: emailData.sender_email,
                 body: '',
                 date: new Date().toLocaleString(),
                 preview: '',
@@ -894,7 +941,7 @@
             updateCounts();
             
             // Show notification
-            showToast(`New email from ${emailData.from}`, 'success');
+            showToast(`New email from ${emailData.sender}`, 'success');
             
             // Update inbox count with animation
             const inboxCount = document.getElementById('inbox-count');
@@ -904,10 +951,10 @@
             }, 200);
         }
         
-        function handleEmailStatusChange(data) {
+        function handleEmailUpdated(data) {
             const email = emails.find(e => e.id === data.email_id);
             if (email) {
-                email.is_read = data.type === 'email_read';
+                Object.assign(email, data.updates);
                 renderEmailList();
                 updateCounts();
             }
@@ -923,10 +970,19 @@
             }
         }
         
-        function handleBatchOperation(data) {
-            // Refresh the email list to show batch changes
-            fetchEmails(currentPage);
-            showToast(`Batch ${data.operation} completed`, 'success');
+        function handleSyncStatus(data) {
+            if (data.status === 'started') {
+                showToast(data.message, 'info');
+            } else if (data.status === 'completed') {
+                showToast(data.message, 'success');
+                // Refresh email list
+                fetchEmails(1, false);
+            } else if (data.status === 'error') {
+                showToast(data.message, 'error');
+            } else if (data.status === 'syncing' && data.progress) {
+                // Could show progress bar here
+                console.log(`Sync progress: ${data.progress}%`);
+            }
         }
         
         function showDefaultDetail() {
@@ -1064,8 +1120,8 @@
         
         // Initialize application
         function init() {
-            // Start long-polling for updates
-            initLongPolling();
+            // Initialize real-time updates
+            initRealtimeUpdates();
             
             // Initial email load
             fetchEmails(1);
@@ -1083,9 +1139,6 @@
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
             isRealtimeEnabled = false;
-            if (eventSource) {
-                eventSource.close();
-            }
         });
         
         // Start the application
