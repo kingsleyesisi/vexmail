@@ -3,986 +3,366 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VexMail - Gmail-style Email Client</title>
+    <title>Simple Email Client</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
-        /* Custom Gmail-style colors and animations */
-        .gmail-blue { color: #1a73e8; }
-        .gmail-red { color: #ea4335; }
-        .gmail-yellow { color: #fbbc04; }
-        .gmail-green { color: #34a853; }
-        
-        .email-item:hover { background-color: #f8f9fa; }
-        .email-unread { background-color: #ffffff; font-weight: 600; }
-        .email-read { background-color: #f8f9fa; font-weight: 400; }
-        
-        .sidebar-item:hover { background-color: #f1f3f4; }
-        .sidebar-active { background-color: #fce8e6; color: #d93025; }
-        
-        .loading-spinner {
-            border: 2px solid #f3f3f3;
-            border-top: 2px solid #1a73e8;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            animation: spin 1s linear infinite;
+        .email-item:hover {
+            background-color: #f3f4f6;
         }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .email-unread {
+            font-weight: 600;
+            background-color: #ffffff;
         }
-        
-        .fade-in {
-            animation: fadeIn 0.3s ease-in;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .thread-indicator {
-            border-left: 3px solid #1a73e8;
-            padding-left: 8px;
+        .email-read {
+            font-weight: 400;
+            background-color: #f9fafb;
         }
     </style>
 </head>
-<body class="bg-gray-50 font-sans">
-    <!-- Gmail-style Header -->
-    <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-            <button id="menuToggle" class="p-2 rounded-full hover:bg-gray-100">
-                <i class="fas fa-bars text-gray-600"></i>
-            </button>
-            <div class="flex items-center space-x-2">
-                <i class="fas fa-envelope text-2xl gmail-blue"></i>
-                <h1 class="text-xl font-normal text-gray-800">VexMail</h1>
+<body class="bg-gray-100">
+    <!-- Header -->
+    <header class="bg-white shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <i class="fas fa-envelope text-2xl text-blue-600"></i>
+                <h1 class="text-xl font-semibold text-gray-900">Simple Email</h1>
             </div>
-        </div>
-        
-        <!-- Search Bar -->
-        <div class="flex-1 max-w-2xl mx-8">
-            <div class="relative">
-                <input 
-                    type="text" 
-                    id="searchInput"
-                    placeholder="Search mail (try: from:user@example.com, has:attachment, is:unread)"
-                    class="w-full px-4 py-2 pl-10 pr-4 bg-gray-100 rounded-lg focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-500"
-                >
-                <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
-            </div>
-        </div>
-        
-        <!-- Header Actions -->
-        <div class="flex items-center space-x-2">
-            <button id="syncBtn" class="p-2 rounded-full hover:bg-gray-100" title="Sync emails">
-                <i class="fas fa-sync-alt text-gray-600"></i>
+
+            <button id="syncBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2">
+                <i class="fas fa-sync-alt"></i>
+                <span>Sync Emails</span>
             </button>
-            <button class="p-2 rounded-full hover:bg-gray-100" title="Settings">
-                <i class="fas fa-cog text-gray-600"></i>
-            </button>
-            <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
-                <span class="text-white text-sm font-medium">U</span>
-            </div>
         </div>
     </header>
 
-    <div class="flex h-screen">
-        <!-- Gmail-style Sidebar -->
-        <aside id="sidebar" class="w-64 bg-white border-r border-gray-200 flex flex-col">
-            <!-- Compose Button -->
-            <div class="p-4">
-                <button class="w-full bg-blue-500 hover:bg-blue-600 text-white py-3 px-4 rounded-lg flex items-center space-x-2 transition-colors">
-                    <i class="fas fa-plus"></i>
-                    <span>Compose</span>
-                </button>
-            </div>
-            
-            <!-- Navigation Labels -->
-            <nav class="flex-1 px-2">
-                <div id="labelsList" class="space-y-1">
-                    <!-- Labels will be loaded here -->
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <!-- Stats Bar -->
+        <div class="bg-white rounded-lg shadow-sm p-4 mb-6">
+            <div class="grid grid-cols-3 gap-4">
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-gray-900" id="totalCount">0</div>
+                    <div class="text-sm text-gray-600">Total Emails</div>
                 </div>
-            </nav>
-            
-            <!-- Storage Info -->
-            <div class="p-4 border-t border-gray-200">
-                <div class="text-xs text-gray-500">
-                    <div class="flex justify-between">
-                        <span>Storage used:</span>
-                        <span id="storageUsed">Loading...</span>
-                    </div>
-                    <div class="w-full bg-gray-200 rounded-full h-1 mt-1">
-                        <div id="storageBar" class="bg-blue-500 h-1 rounded-full" style="width: 0%"></div>
-                    </div>
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-blue-600" id="unreadCount">0</div>
+                    <div class="text-sm text-gray-600">Unread</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-yellow-600" id="starredCount">0</div>
+                    <div class="text-sm text-gray-600">Starred</div>
                 </div>
             </div>
-        </aside>
+        </div>
 
-        <!-- Main Content Area -->
-        <main class="flex-1 flex flex-col">
-            <!-- Toolbar -->
-            <div class="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between">
-                <div class="flex items-center space-x-2">
-                    <input type="checkbox" id="selectAll" class="rounded">
-                    <button id="refreshBtn" class="p-2 rounded hover:bg-gray-100" title="Refresh">
-                        <i class="fas fa-redo text-gray-600"></i>
-                    </button>
-                    <div class="border-l border-gray-300 h-6 mx-2"></div>
-                    
-                    <!-- Batch Actions -->
-                    <div id="batchActions" class="hidden flex items-center space-x-2">
-                        <button class="batch-action p-2 rounded hover:bg-gray-100" data-action="archive" title="Archive">
-                            <i class="fas fa-archive text-gray-600"></i>
-                        </button>
-                        <button class="batch-action p-2 rounded hover:bg-gray-100" data-action="delete" title="Delete">
-                            <i class="fas fa-trash text-gray-600"></i>
-                        </button>
-                        <button class="batch-action p-2 rounded hover:bg-gray-100" data-action="mark_read" title="Mark as read">
-                            <i class="fas fa-envelope-open text-gray-600"></i>
-                        </button>
-                        <button class="batch-action p-2 rounded hover:bg-gray-100" data-action="mark_unread" title="Mark as unread">
-                            <i class="fas fa-envelope text-gray-600"></i>
-                        </button>
-                    </div>
-                </div>
-                
-                <!-- View Options -->
-                <div class="flex items-center space-x-2">
-                    <span id="emailCount" class="text-sm text-gray-600">Loading...</span>
-                    <div class="flex items-center space-x-1">
-                        <button id="prevPage" class="p-2 rounded hover:bg-gray-100 disabled:opacity-50" disabled>
-                            <i class="fas fa-chevron-left text-gray-600"></i>
-                        </button>
-                        <button id="nextPage" class="p-2 rounded hover:bg-gray-100 disabled:opacity-50" disabled>
-                            <i class="fas fa-chevron-right text-gray-600"></i>
-                        </button>
-                    </div>
-                </div>
+        <!-- Email List -->
+        <div class="bg-white rounded-lg shadow-sm">
+            <div class="p-4 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Inbox</h2>
+            </div>
+
+            <!-- Loading State -->
+            <div id="loadingState" class="p-8 text-center">
+                <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent"></div>
+                <p class="mt-2 text-gray-600">Loading emails...</p>
+            </div>
+
+            <!-- Empty State -->
+            <div id="emptyState" class="hidden p-8 text-center">
+                <i class="fas fa-inbox text-6xl text-gray-300 mb-4"></i>
+                <p class="text-gray-600 text-lg">No emails yet</p>
+                <p class="text-gray-500 text-sm mt-2">Click "Sync Emails" to fetch your emails</p>
             </div>
 
             <!-- Email List -->
-            <div class="flex-1 overflow-hidden">
-                <div id="emailList" class="h-full overflow-y-auto">
-                    <!-- Loading State -->
-                    <div id="loadingState" class="flex items-center justify-center h-64">
-                        <div class="text-center">
-                            <div class="loading-spinner mx-auto mb-4"></div>
-                            <p class="text-gray-600">Loading emails...</p>
-                        </div>
-                    </div>
-                    
-                    <!-- Empty State -->
-                    <div id="emptyState" class="hidden flex items-center justify-center h-64">
-                        <div class="text-center">
-                            <i class="fas fa-inbox text-6xl text-gray-300 mb-4"></i>
-                            <p class="text-gray-600 text-lg">No emails found</p>
-                            <p class="text-gray-500 text-sm">Your inbox is empty or no emails match your search.</p>
-                        </div>
-                    </div>
-                    
-                    <!-- Email Items Container -->
-                    <div id="emailItems" class="divide-y divide-gray-200">
-                        <!-- Email items will be loaded here -->
-                    </div>
-                </div>
+            <div id="emailList" class="hidden divide-y divide-gray-200">
+                <!-- Emails will be loaded here -->
             </div>
-        </main>
+        </div>
     </div>
 
     <!-- Email Detail Modal -->
     <div id="emailModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-lg max-w-4xl w-full max-h-full overflow-hidden flex flex-col">
+        <div class="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <!-- Modal Header -->
-            <div class="flex items-center justify-between p-4 border-b border-gray-200">
-                <h2 id="modalSubject" class="text-lg font-semibold text-gray-800 truncate flex-1"></h2>
-                <div class="flex items-center space-x-2 ml-4">
-                    <button id="modalStar" class="p-2 rounded hover:bg-gray-100">
-                        <i class="fas fa-star text-gray-400"></i>
-                    </button>
-                    <button id="modalImportant" class="p-2 rounded hover:bg-gray-100">
-                        <i class="fas fa-exclamation text-gray-400"></i>
-                    </button>
-                    <button id="closeModal" class="p-2 rounded hover:bg-gray-100">
-                        <i class="fas fa-times text-gray-600"></i>
-                    </button>
-                </div>
+            <div class="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h2 id="modalSubject" class="text-xl font-semibold text-gray-900 flex-1"></h2>
+                <button id="closeModal" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
             </div>
-            
+
             <!-- Modal Content -->
-            <div class="flex-1 overflow-y-auto p-4">
-                <div id="modalContent">
-                    <!-- Email content will be loaded here -->
+            <div class="flex-1 overflow-y-auto p-6">
+                <div class="mb-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="font-medium text-gray-900" id="modalSender"></div>
+                            <div class="text-sm text-gray-600" id="modalDate"></div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button id="modalStarBtn" class="p-2 rounded hover:bg-gray-100">
+                                <i class="fas fa-star text-gray-400"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="prose max-w-none">
+                    <div id="modalBody" class="text-gray-700 whitespace-pre-wrap"></div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Notification Toast -->
-    <div id="toast" class="hidden fixed bottom-4 right-4 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50">
+    <!-- Toast Notification -->
+    <div id="toast" class="hidden fixed bottom-4 right-4 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-50">
         <span id="toastMessage"></span>
     </div>
 
-    <!-- Sync Status -->
-    <div id="syncStatus" class="hidden fixed top-20 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50">
-        <div class="flex items-center space-x-2">
-            <div class="loading-spinner border-white border-t-transparent"></div>
-            <span id="syncMessage">Syncing emails...</span>
-        </div>
-    </div>
-
     <script>
-        // Gmail-style Email Client JavaScript
-        class VexMailClient {
-            constructor() {
-                this.currentLabel = 'inbox';
-                this.currentPage = 1;
-                this.selectedEmails = new Set();
-                this.realtimeClient = null;
-                this.searchTimeout = null;
-                
-                this.init();
-            }
-            
-            async init() {
-                this.setupEventListeners();
-                await this.loadLabels();
-                await this.loadEmails();
-                this.setupRealtime();
-                this.loadSystemStats();
-            }
-            
-            setupEventListeners() {
-                // Search functionality
-                document.getElementById('searchInput').addEventListener('input', (e) => {
-                    clearTimeout(this.searchTimeout);
-                    this.searchTimeout = setTimeout(() => {
-                        this.performSearch(e.target.value);
-                    }, 300);
-                });
-                
-                // Sync button
-                document.getElementById('syncBtn').addEventListener('click', () => {
-                    this.syncEmails();
-                });
-                
-                // Refresh button
-                document.getElementById('refreshBtn').addEventListener('click', () => {
-                    this.loadEmails(true);
-                });
-                
-                // Select all checkbox
-                document.getElementById('selectAll').addEventListener('change', (e) => {
-                    this.toggleSelectAll(e.target.checked);
-                });
-                
-                // Pagination
-                document.getElementById('prevPage').addEventListener('click', () => {
-                    if (this.currentPage > 1) {
-                        this.currentPage--;
-                        this.loadEmails();
-                    }
-                });
-                
-                document.getElementById('nextPage').addEventListener('click', () => {
-                    this.currentPage++;
-                    this.loadEmails();
-                });
-                
-                // Batch actions
-                document.querySelectorAll('.batch-action').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        const action = e.currentTarget.dataset.action;
-                        this.performBatchAction(action);
-                    });
-                });
-                
-                // Modal close
-                document.getElementById('closeModal').addEventListener('click', () => {
-                    this.closeEmailModal();
-                });
-                
-                // Click outside modal to close
-                document.getElementById('emailModal').addEventListener('click', (e) => {
-                    if (e.target.id === 'emailModal') {
-                        this.closeEmailModal();
-                    }
-                });
-            }
-            
-            async loadLabels() {
-                try {
-                    const response = await fetch('/api/labels');
-                    const data = await response.json();
-                    
-                    const labelsList = document.getElementById('labelsList');
-                    labelsList.innerHTML = '';
-                    
-                    data.labels.forEach(label => {
-                        const labelElement = this.createLabelElement(label);
-                        labelsList.appendChild(labelElement);
-                    });
-                    
-                } catch (error) {
-                    console.error('Error loading labels:', error);
-                    this.showToast('Failed to load labels', 'error');
+        // Email Client JavaScript
+        let currentEmailId = null;
+        let currentEmailData = null;
+
+        // Load emails when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            loadEmails();
+            loadStats();
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            // Sync button
+            document.getElementById('syncBtn').addEventListener('click', syncEmails);
+
+            // Close modal
+            document.getElementById('closeModal').addEventListener('click', closeModal);
+
+            // Click outside modal to close
+            document.getElementById('emailModal').addEventListener('click', (e) => {
+                if (e.target.id === 'emailModal') {
+                    closeModal();
                 }
-            }
-            
-            createLabelElement(label) {
-                const div = document.createElement('div');
-                div.className = `sidebar-item flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer ${
-                    this.currentLabel === label.name ? 'sidebar-active' : ''
-                }`;
-                
-                const icon = this.getLabelIcon(label.name);
-                const count = label.email_count > 0 ? `<span class="text-xs bg-gray-200 px-2 py-1 rounded-full">${label.email_count}</span>` : '';
-                
-                div.innerHTML = `
-                    <div class="flex items-center space-x-3">
-                        <i class="${icon}" style="color: ${label.color}"></i>
-                        <span class="text-sm">${label.display_name}</span>
-                    </div>
-                    ${count}
-                `;
-                
-                div.addEventListener('click', () => {
-                    this.selectLabel(label.name);
-                });
-                
-                return div;
-            }
-            
-            getLabelIcon(labelName) {
-                const icons = {
-                    'inbox': 'fas fa-inbox',
-                    'starred': 'fas fa-star',
-                    'important': 'fas fa-exclamation',
-                    'sent': 'fas fa-paper-plane',
-                    'drafts': 'fas fa-file-alt',
-                    'spam': 'fas fa-exclamation-triangle',
-                    'trash': 'fas fa-trash'
-                };
-                return icons[labelName] || 'fas fa-tag';
-            }
-            
-            async selectLabel(labelName) {
-                this.currentLabel = labelName;
-                this.currentPage = 1;
-                this.selectedEmails.clear();
-                
-                // Update sidebar active state
-                document.querySelectorAll('.sidebar-item').forEach(item => {
-                    item.classList.remove('sidebar-active');
-                });
-                event.currentTarget.classList.add('sidebar-active');
-                
-                await this.loadEmails();
-            }
-            
-            async loadEmails(forceRefresh = false) {
-                try {
-                    this.showLoading(true);
-                    
-                    const url = `/api/emails/${this.currentLabel}?page=${this.currentPage}&per_page=50${forceRefresh ? '&force_refresh=true' : ''}`;
-                    const response = await fetch(url);
-                    const data = await response.json();
-                    
-                    this.renderEmails(data.emails || []);
-                    this.updatePagination(data.pagination);
-                    
-                } catch (error) {
-                    console.error('Error loading emails:', error);
-                    this.showToast('Failed to load emails', 'error');
-                } finally {
-                    this.showLoading(false);
-                }
-            }
-            
-            renderEmails(emails) {
-                const emailItems = document.getElementById('emailItems');
-                const emptyState = document.getElementById('emptyState');
-                
-                if (emails.length === 0) {
-                    emailItems.innerHTML = '';
-                    emptyState.classList.remove('hidden');
-                    return;
-                }
-                
-                emptyState.classList.add('hidden');
-                emailItems.innerHTML = '';
-                
-                emails.forEach(emailData => {
-                    const emailElement = this.createEmailElement(emailData);
-                    emailItems.appendChild(emailElement);
-                });
-            }
-            
-            createEmailElement(emailData) {
-                const div = document.createElement('div');
-                const isThread = emailData.email_count > 1;
-                const mainEmail = emailData.main_email || emailData;
-                
-                div.className = `email-item flex items-center px-4 py-3 cursor-pointer ${
-                    mainEmail.is_read ? 'email-read' : 'email-unread'
-                } ${isThread ? 'thread-indicator' : ''}`;
-                
-                div.innerHTML = `
-                    <div class="flex items-center space-x-3 flex-1">
-                        <input type="checkbox" class="email-checkbox rounded" data-email-id="${mainEmail.id}">
-                        <button class="star-btn p-1 rounded hover:bg-gray-200" data-email-id="${mainEmail.id}">
-                            <i class="fas fa-star ${mainEmail.is_starred ? 'text-yellow-400' : 'text-gray-300'}"></i>
-                        </button>
-                        <button class="important-btn p-1 rounded hover:bg-gray-200" data-email-id="${mainEmail.id}">
-                            <i class="fas fa-exclamation ${mainEmail.is_important ? 'text-yellow-400' : 'text-gray-300'}"></i>
-                        </button>
-                        
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center justify-between">
-                                <div class="flex items-center space-x-2 min-w-0 flex-1">
-                                    <span class="font-medium text-gray-900 truncate">${mainEmail.sender_name || mainEmail.sender_email}</span>
-                                    ${isThread ? `<span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">${emailData.email_count}</span>` : ''}
-                                    ${mainEmail.has_attachments ? '<i class="fas fa-paperclip text-gray-400 text-xs"></i>' : ''}
-                                </div>
-                                <span class="text-sm text-gray-500 ml-2">${this.formatDate(mainEmail.date_received)}</span>
-                            </div>
-                            <div class="mt-1">
-                                <span class="text-sm text-gray-900 font-medium">${mainEmail.subject || '(No Subject)'}</span>
-                                <span class="text-sm text-gray-600 ml-2">- ${mainEmail.preview_text || ''}</span>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                
-                // Add event listeners
-                div.addEventListener('click', (e) => {
-                    if (!e.target.matches('input, button, i')) {
-                        this.openEmailDetail(mainEmail.id);
-                    }
-                });
-                
-                // Checkbox handling
-                const checkbox = div.querySelector('.email-checkbox');
-                checkbox.addEventListener('change', (e) => {
-                    e.stopPropagation();
-                    if (e.target.checked) {
-                        this.selectedEmails.add(mainEmail.id);
-                    } else {
-                        this.selectedEmails.delete(mainEmail.id);
-                    }
-                    this.updateBatchActions();
-                });
-                
-                // Star button
-                const starBtn = div.querySelector('.star-btn');
-                starBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.toggleEmailStar(mainEmail.id, !mainEmail.is_starred);
-                });
-                
-                // Important button
-                const importantBtn = div.querySelector('.important-btn');
-                importantBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.toggleEmailImportant(mainEmail.id, !mainEmail.is_important);
-                });
-                
-                return div;
-            }
-            
-            async openEmailDetail(emailId) {
-                try {
-                    const response = await fetch(`/api/emails/${emailId}`);
-                    const emailData = await response.json();
-                    
-                    if (emailData.error) {
-                        this.showToast('Failed to load email', 'error');
-                        return;
-                    }
-                    
-                    this.renderEmailModal(emailData);
-                    
-                    // Mark as read if unread
-                    if (!emailData.is_read) {
-                        this.updateEmailStatus(emailId, 'read', true);
-                    }
-                    
-                } catch (error) {
-                    console.error('Error loading email detail:', error);
-                    this.showToast('Failed to load email', 'error');
-                }
-            }
-            
-            renderEmailModal(emailData) {
-                const modal = document.getElementById('emailModal');
-                const subject = document.getElementById('modalSubject');
-                const content = document.getElementById('modalContent');
-                const starBtn = document.getElementById('modalStar');
-                const importantBtn = document.getElementById('modalImportant');
-                
-                subject.textContent = emailData.subject || '(No Subject)';
-                
-                // Update action buttons
-                const starIcon = starBtn.querySelector('i');
-                starIcon.className = `fas fa-star ${emailData.is_starred ? 'text-yellow-400' : 'text-gray-400'}`;
-                
-                const importantIcon = importantBtn.querySelector('i');
-                importantIcon.className = `fas fa-exclamation ${emailData.is_important ? 'text-yellow-400' : 'text-gray-400'}`;
-                
-                // Render email content
-                content.innerHTML = `
-                    <div class="space-y-4">
-                        <!-- Email Header -->
-                        <div class="bg-gray-50 p-4 rounded-lg">
-                            <div class="flex items-center justify-between mb-2">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
-                                        <span class="text-white font-medium">${(emailData.sender_name || emailData.sender_email).charAt(0).toUpperCase()}</span>
-                                    </div>
-                                    <div>
-                                        <div class="font-medium text-gray-900">${emailData.sender_name || emailData.sender_email}</div>
-                                        <div class="text-sm text-gray-600">${emailData.sender_email}</div>
-                                    </div>
-                                </div>
-                                <div class="text-sm text-gray-500">${this.formatFullDate(emailData.date_received)}</div>
-                            </div>
-                            
-                            ${emailData.recipients && emailData.recipients.length > 0 ? `
-                                <div class="text-sm text-gray-600">
-                                    <span class="font-medium">To:</span> ${emailData.recipients.join(', ')}
-                                </div>
-                            ` : ''}
-                            
-                            ${emailData.cc_recipients && emailData.cc_recipients.length > 0 ? `
-                                <div class="text-sm text-gray-600">
-                                    <span class="font-medium">CC:</span> ${emailData.cc_recipients.join(', ')}
-                                </div>
-                            ` : ''}
-                        </div>
-                        
-                        <!-- Email Content -->
-                        <div class="prose max-w-none">
-                            ${emailData.html_content || this.formatTextContent(emailData.text_content) || '<p class="text-gray-500 italic">No content</p>'}
-                        </div>
-                        
-                        <!-- Attachments -->
-                        ${emailData.attachments && emailData.attachments.length > 0 ? `
-                            <div class="border-t pt-4">
-                                <h4 class="font-medium text-gray-900 mb-2">Attachments (${emailData.attachments.length})</h4>
-                                <div class="space-y-2">
-                                    ${emailData.attachments.map(att => `
-                                        <div class="flex items-center justify-between p-2 bg-gray-50 rounded">
-                                            <div class="flex items-center space-x-2">
-                                                <i class="fas fa-file text-gray-400"></i>
-                                                <span class="text-sm font-medium">${att.filename}</span>
-                                                <span class="text-xs text-gray-500">(${att.size_display})</span>
-                                            </div>
-                                            <a href="${att.download_url}" class="text-blue-600 hover:text-blue-800 text-sm">Download</a>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            </div>
-                        ` : ''}
-                        
-                        <!-- Thread Emails -->
-                        ${emailData.thread_emails && emailData.thread_emails.length > 0 ? `
-                            <div class="border-t pt-4">
-                                <h4 class="font-medium text-gray-900 mb-2">Conversation (${emailData.thread_emails.length + 1} messages)</h4>
-                                <div class="space-y-2">
-                                    ${emailData.thread_emails.map(threadEmail => `
-                                        <div class="p-3 bg-gray-50 rounded cursor-pointer hover:bg-gray-100" onclick="vexmail.openEmailDetail('${threadEmail.id}')">
-                                            <div class="flex items-center justify-between">
-                                                <span class="font-medium">${threadEmail.sender_name || threadEmail.sender_email}</span>
-                                                <span class="text-sm text-gray-500">${this.formatDate(threadEmail.date_received)}</span>
-                                            </div>
-                                            <div class="text-sm text-gray-600 truncate">${threadEmail.subject || '(No Subject)'}</div>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            </div>
-                        ` : ''}
-                    </div>
-                `;
-                
-                // Setup modal action buttons
-                starBtn.onclick = () => {
-                    this.toggleEmailStar(emailData.id, !emailData.is_starred);
-                    emailData.is_starred = !emailData.is_starred;
-                    starIcon.className = `fas fa-star ${emailData.is_starred ? 'text-yellow-400' : 'text-gray-400'}`;
-                };
-                
-                importantBtn.onclick = () => {
-                    this.toggleEmailImportant(emailData.id, !emailData.is_important);
-                    emailData.is_important = !emailData.is_important;
-                    importantIcon.className = `fas fa-exclamation ${emailData.is_important ? 'text-yellow-400' : 'text-gray-400'}`;
-                };
-                
-                modal.classList.remove('hidden');
-            }
-            
-            closeEmailModal() {
-                document.getElementById('emailModal').classList.add('hidden');
-            }
-            
-            async toggleEmailStar(emailId, starred) {
-                try {
-                    const response = await fetch(`/api/emails/${emailId}/actions`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: 'star', value: starred })
-                    });
-                    
-                    if (response.ok) {
-                        this.updateEmailInList(emailId, { is_starred: starred });
-                    }
-                } catch (error) {
-                    console.error('Error toggling star:', error);
-                }
-            }
-            
-            async toggleEmailImportant(emailId, important) {
-                try {
-                    const response = await fetch(`/api/emails/${emailId}/actions`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action: 'important', value: important })
-                    });
-                    
-                    if (response.ok) {
-                        this.updateEmailInList(emailId, { is_important: important });
-                    }
-                } catch (error) {
-                    console.error('Error toggling important:', error);
-                }
-            }
-            
-            async updateEmailStatus(emailId, action, value) {
-                try {
-                    const response = await fetch(`/api/emails/${emailId}/actions`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ action, value })
-                    });
-                    
-                    if (response.ok) {
-                        const update = {};
-                        update[`is_${action}`] = value;
-                        this.updateEmailInList(emailId, update);
-                    }
-                } catch (error) {
-                    console.error('Error updating email status:', error);
-                }
-            }
-            
-            updateEmailInList(emailId, updates) {
-                const emailElement = document.querySelector(`[data-email-id="${emailId}"]`).closest('.email-item');
-                if (emailElement) {
-                    // Update visual state based on updates
-                    if ('is_read' in updates) {
-                        emailElement.className = emailElement.className.replace(/email-(read|unread)/, `email-${updates.is_read ? 'read' : 'unread'}`);
-                    }
-                    
-                    if ('is_starred' in updates) {
-                        const starIcon = emailElement.querySelector('.star-btn i');
-                        starIcon.className = `fas fa-star ${updates.is_starred ? 'text-yellow-400' : 'text-gray-300'}`;
-                    }
-                    
-                    if ('is_important' in updates) {
-                        const importantIcon = emailElement.querySelector('.important-btn i');
-                        importantIcon.className = `fas fa-exclamation ${updates.is_important ? 'text-yellow-400' : 'text-gray-300'}`;
-                    }
-                }
-            }
-            
-            async performSearch(query) {
-                if (!query.trim()) {
-                    this.loadEmails();
-                    return;
-                }
-                
-                try {
-                    this.showLoading(true);
-                    
-                    const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&page=1&per_page=50`);
-                    const data = await response.json();
-                    
-                    this.renderEmails(data.emails || []);
-                    this.updatePagination(data.pagination);
-                    
-                } catch (error) {
-                    console.error('Error searching emails:', error);
-                    this.showToast('Search failed', 'error');
-                } finally {
-                    this.showLoading(false);
-                }
-            }
-            
-            async syncEmails() {
-                try {
-                    this.showSyncStatus(true, 'Starting sync...');
-                    
-                    const response = await fetch('/api/sync', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ limit: 100 })
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.success) {
-                        this.showToast(`Sync completed: ${result.result.count} new emails`, 'success');
-                        await this.loadEmails(true);
-                        await this.loadLabels();
-                    } else {
-                        this.showToast('Sync failed', 'error');
-                    }
-                    
-                } catch (error) {
-                    console.error('Error syncing emails:', error);
-                    this.showToast('Sync failed', 'error');
-                } finally {
-                    this.showSyncStatus(false);
-                }
-            }
-            
-            toggleSelectAll(checked) {
-                const checkboxes = document.querySelectorAll('.email-checkbox');
-                checkboxes.forEach(checkbox => {
-                    checkbox.checked = checked;
-                    const emailId = checkbox.dataset.emailId;
-                    if (checked) {
-                        this.selectedEmails.add(emailId);
-                    } else {
-                        this.selectedEmails.delete(emailId);
-                    }
-                });
-                this.updateBatchActions();
-            }
-            
-            updateBatchActions() {
-                const batchActions = document.getElementById('batchActions');
-                const selectAll = document.getElementById('selectAll');
-                
-                if (this.selectedEmails.size > 0) {
-                    batchActions.classList.remove('hidden');
-                    selectAll.indeterminate = this.selectedEmails.size > 0 && this.selectedEmails.size < document.querySelectorAll('.email-checkbox').length;
+            });
+
+            // Modal star button
+            document.getElementById('modalStarBtn').addEventListener('click', toggleModalStar);
+        }
+
+        async function loadEmails() {
+            try {
+                showLoading(true);
+
+                const response = await fetch('/api/emails');
+                const data = await response.json();
+
+                if (data.success && data.emails.length > 0) {
+                    renderEmails(data.emails);
+                    showLoading(false);
+                    document.getElementById('emailList').classList.remove('hidden');
                 } else {
-                    batchActions.classList.add('hidden');
-                    selectAll.indeterminate = false;
+                    showLoading(false);
+                    document.getElementById('emptyState').classList.remove('hidden');
                 }
-            }
-            
-            async performBatchAction(action) {
-                if (this.selectedEmails.size === 0) return;
-                
-                try {
-                    const response = await fetch('/api/emails/batch-actions', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            email_ids: Array.from(this.selectedEmails),
-                            action: action
-                        })
-                    });
-                    
-                    const result = await response.json();
-                    
-                    if (result.success) {
-                        this.showToast(`${action} completed for ${result.count} emails`, 'success');
-                        this.selectedEmails.clear();
-                        document.getElementById('selectAll').checked = false;
-                        this.updateBatchActions();
-                        await this.loadEmails(true);
-                    } else {
-                        this.showToast(`Batch ${action} failed`, 'error');
-                    }
-                    
-                } catch (error) {
-                    console.error('Error performing batch action:', error);
-                    this.showToast(`Batch ${action} failed`, 'error');
-                }
-            }
-            
-            updatePagination(pagination) {
-                const emailCount = document.getElementById('emailCount');
-                const prevBtn = document.getElementById('prevPage');
-                const nextBtn = document.getElementById('nextPage');
-                
-                if (pagination) {
-                    emailCount.textContent = `${pagination.total} emails`;
-                    prevBtn.disabled = !pagination.has_prev;
-                    nextBtn.disabled = !pagination.has_next;
-                } else {
-                    emailCount.textContent = '0 emails';
-                    prevBtn.disabled = true;
-                    nextBtn.disabled = true;
-                }
-            }
-            
-            async setupRealtime() {
-                try {
-                    // Register for real-time updates
-                    const response = await fetch('/api/realtime/register', { method: 'POST' });
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                        this.realtimeClient = data.client_id;
-                        this.startRealtimePolling();
-                    }
-                } catch (error) {
-                    console.error('Error setting up real-time:', error);
-                }
-            }
-            
-            async startRealtimePolling() {
-                if (!this.realtimeClient) return;
-                
-                try {
-                    const response = await fetch(`/api/realtime/events/${this.realtimeClient}?timeout=30`);
-                    const event = await response.json();
-                    
-                    if (event && event.type !== 'heartbeat') {
-                        this.handleRealtimeEvent(event);
-                    }
-                    
-                    // Continue polling
-                    setTimeout(() => this.startRealtimePolling(), 1000);
-                    
-                } catch (error) {
-                    console.error('Real-time polling error:', error);
-                    // Retry after delay
-                    setTimeout(() => this.startRealtimePolling(), 5000);
-                }
-            }
-            
-            handleRealtimeEvent(event) {
-                switch (event.type) {
-                    case 'email_received':
-                        this.showToast('New email received!', 'info');
-                        this.loadEmails(true);
-                        this.loadLabels();
-                        break;
-                        
-                    case 'email_updated':
-                        // Update email in list without full reload
-                        this.updateEmailInList(event.data.email_id, event.data.updates);
-                        break;
-                        
-                    case 'sync_status':
-                        if (event.data.status === 'syncing') {
-                            this.showSyncStatus(true, event.data.message);
-                        } else if (event.data.status === 'completed') {
-                            this.showSyncStatus(false);
-                            this.showToast(event.data.message, 'success');
-                        } else if (event.data.status === 'error') {
-                            this.showSyncStatus(false);
-                            this.showToast(event.data.message, 'error');
-                        }
-                        break;
-                }
-            }
-            
-            async loadSystemStats() {
-                try {
-                    const response = await fetch('/api/stats');
-                    const stats = await response.json();
-                    
-                    if (stats.storage) {
-                        const storageUsed = document.getElementById('storageUsed');
-                        const storageBar = document.getElementById('storageBar');
-                        
-                        storageUsed.textContent = `${stats.storage.total_size_mb} MB`;
-                        
-                        // Assume 1GB limit for display
-                        const percentage = Math.min((stats.storage.total_size_mb / 1024) * 100, 100);
-                        storageBar.style.width = `${percentage}%`;
-                    }
-                } catch (error) {
-                    console.error('Error loading system stats:', error);
-                }
-            }
-            
-            showLoading(show) {
-                const loadingState = document.getElementById('loadingState');
-                const emailItems = document.getElementById('emailItems');
-                
-                if (show) {
-                    loadingState.classList.remove('hidden');
-                    emailItems.classList.add('hidden');
-                } else {
-                    loadingState.classList.add('hidden');
-                    emailItems.classList.remove('hidden');
-                }
-            }
-            
-            showSyncStatus(show, message = 'Syncing emails...') {
-                const syncStatus = document.getElementById('syncStatus');
-                const syncMessage = document.getElementById('syncMessage');
-                
-                if (show) {
-                    syncMessage.textContent = message;
-                    syncStatus.classList.remove('hidden');
-                } else {
-                    syncStatus.classList.add('hidden');
-                }
-            }
-            
-            showToast(message, type = 'info') {
-                const toast = document.getElementById('toast');
-                const toastMessage = document.getElementById('toastMessage');
-                
-                toastMessage.textContent = message;
-                
-                // Set color based on type
-                toast.className = `fixed bottom-4 right-4 px-4 py-2 rounded-lg shadow-lg z-50 ${
-                    type === 'error' ? 'bg-red-500 text-white' :
-                    type === 'success' ? 'bg-green-500 text-white' :
-                    type === 'info' ? 'bg-blue-500 text-white' :
-                    'bg-gray-800 text-white'
-                }`;
-                
-                toast.classList.remove('hidden');
-                
-                setTimeout(() => {
-                    toast.classList.add('hidden');
-                }, 3000);
-            }
-            
-            formatDate(dateString) {
-                if (!dateString) return '';
-                
-                const date = new Date(dateString);
-                const now = new Date();
-                const diffTime = Math.abs(now - date);
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                
-                if (diffDays === 1) {
-                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                } else if (diffDays <= 7) {
-                    return date.toLocaleDateString([], { weekday: 'short' });
-                } else {
-                    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-                }
-            }
-            
-            formatFullDate(dateString) {
-                if (!dateString) return '';
-                return new Date(dateString).toLocaleString();
-            }
-            
-            formatTextContent(text) {
-                if (!text) return '';
-                return text.replace(/\n/g, '<br>');
+
+            } catch (error) {
+                console.error('Error loading emails:', error);
+                showToast('Failed to load emails', 'error');
+                showLoading(false);
             }
         }
-        
-        // Initialize the application
-        const vexmail = new VexMailClient();
-        
-        // Make it globally available for modal callbacks
-        window.vexmail = vexmail;
+
+        function renderEmails(emails) {
+            const emailList = document.getElementById('emailList');
+            emailList.innerHTML = '';
+
+            emails.forEach(email => {
+                const emailDiv = document.createElement('div');
+                emailDiv.className = `email-item p-4 cursor-pointer ${email.is_read ? 'email-read' : 'email-unread'}`;
+
+                emailDiv.innerHTML = `
+                    <div class="flex items-start space-x-4">
+                        <button class="star-btn mt-1" onclick="toggleStar('${email.id}', ${!email.is_starred}); event.stopPropagation();">
+                            <i class="fas fa-star ${email.is_starred ? 'text-yellow-500' : 'text-gray-300'}"></i>
+                        </button>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-baseline justify-between mb-1">
+                                <div class="font-medium text-gray-900 truncate">${email.sender || 'Unknown'}</div>
+                                <div class="text-sm text-gray-500 ml-2">${formatDate(email.date)}</div>
+                            </div>
+                            <div class="text-gray-900 truncate mb-1">${email.subject}</div>
+                            <div class="text-sm text-gray-600 truncate">${email.body ? email.body.substring(0, 100) : '...'}</div>
+                        </div>
+                    </div>
+                `;
+
+                emailDiv.addEventListener('click', () => openEmail(email.id));
+                emailList.appendChild(emailDiv);
+            });
+        }
+
+        async function openEmail(emailId) {
+            try {
+                const response = await fetch(`/api/emails/${emailId}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    currentEmailId = emailId;
+                    currentEmailData = data.email;
+                    showEmailModal(data.email);
+
+                    // Reload list to update read status
+                    setTimeout(() => loadEmails(), 500);
+                }
+
+            } catch (error) {
+                console.error('Error opening email:', error);
+                showToast('Failed to load email', 'error');
+            }
+        }
+
+        function showEmailModal(email) {
+            document.getElementById('modalSubject').textContent = email.subject || '(No Subject)';
+            document.getElementById('modalSender').textContent = email.sender || 'Unknown';
+            document.getElementById('modalDate').textContent = formatFullDate(email.date);
+            document.getElementById('modalBody').textContent = email.body || 'No content';
+
+            // Update star button
+            const starBtn = document.getElementById('modalStarBtn');
+            const starIcon = starBtn.querySelector('i');
+            starIcon.className = `fas fa-star ${email.is_starred ? 'text-yellow-500' : 'text-gray-400'}`;
+
+            document.getElementById('emailModal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('emailModal').classList.add('hidden');
+            currentEmailId = null;
+            currentEmailData = null;
+        }
+
+        async function toggleStar(emailId, isStarred) {
+            try {
+                const response = await fetch(`/api/emails/${emailId}/star`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_starred: isStarred })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    loadEmails();
+                    loadStats();
+                }
+
+            } catch (error) {
+                console.error('Error toggling star:', error);
+            }
+        }
+
+        async function toggleModalStar() {
+            if (!currentEmailId || !currentEmailData) return;
+
+            const newStarred = !currentEmailData.is_starred;
+            await toggleStar(currentEmailId, newStarred);
+
+            // Update modal UI
+            currentEmailData.is_starred = newStarred;
+            const starIcon = document.getElementById('modalStarBtn').querySelector('i');
+            starIcon.className = `fas fa-star ${newStarred ? 'text-yellow-500' : 'text-gray-400'}`;
+        }
+
+        async function syncEmails() {
+            try {
+                const btn = document.getElementById('syncBtn');
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Syncing...</span>';
+
+                const response = await fetch('/api/sync', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast(data.message, 'success');
+                    await loadEmails();
+                    await loadStats();
+                    document.getElementById('emptyState').classList.add('hidden');
+                } else {
+                    showToast('Sync failed: ' + data.error, 'error');
+                }
+
+            } catch (error) {
+                console.error('Error syncing:', error);
+                showToast('Sync failed', 'error');
+            } finally {
+                const btn = document.getElementById('syncBtn');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Sync Emails</span>';
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('totalCount').textContent = data.stats.total;
+                    document.getElementById('unreadCount').textContent = data.stats.unread;
+                    document.getElementById('starredCount').textContent = data.stats.starred;
+                }
+
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loadingState').classList.toggle('hidden', !show);
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toastMessage');
+
+            toastMessage.textContent = message;
+
+            const colors = {
+                'success': 'bg-green-600',
+                'error': 'bg-red-600',
+                'info': 'bg-blue-600'
+            };
+
+            toast.className = `fixed bottom-4 right-4 ${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg z-50`;
+            toast.classList.remove('hidden');
+
+            setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 3000);
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return '';
+
+            const date = new Date(dateString);
+            const now = new Date();
+            const diffTime = Math.abs(now - date);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            if (diffDays === 1) {
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } else if (diffDays <= 7) {
+                return date.toLocaleDateString([], { weekday: 'short' });
+            } else {
+                return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            }
+        }
+
+        function formatFullDate(dateString) {
+            if (!dateString) return '';
+            return new Date(dateString).toLocaleString();
+        }
     </script>
 </body>
 </html>
