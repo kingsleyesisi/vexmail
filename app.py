@@ -12,6 +12,10 @@ import imaplib
 import email
 from email.header import decode_header
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -135,7 +139,7 @@ def fetch_emails_from_server(limit=50):
 @app.route('/')
 def index():
     """Main page"""
-    return render_template('simple_index.html')
+    return render_template('index.html')
 
 
 @app.route('/api/emails')
