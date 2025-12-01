@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(__name__, template_folder='.')
 CORS(app)
 
 # Initialize Supabase client
