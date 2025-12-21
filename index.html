@@ -1,38 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simple Email Client</title>
+    <title>Vexmail - Your Ultimate Email Client</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         .email-item:hover {
             background-color: #f3f4f6;
         }
+
         .email-unread {
             font-weight: 600;
             background-color: #ffffff;
+            border-left: 4px solid #2563eb;
         }
+
         .email-read {
             font-weight: 400;
             background-color: #f9fafb;
+            border-left: 4px solid transparent;
         }
     </style>
 </head>
-<body class="bg-gray-100">
+
+<body class="bg-gray-50 text-gray-800">
     <!-- Header -->
-    <header class="bg-white shadow-sm">
+    <header class="bg-white shadow-sm border-b border-gray-200">
         <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
             <div class="flex items-center space-x-3">
-                <i class="fas fa-envelope text-2xl text-blue-600"></i>
-                <h1 class="text-xl font-semibold text-gray-900">Simple Email</h1>
+                <i class="fas fa-bolt text-2xl text-blue-600"></i>
+                <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Vexmail</h1>
             </div>
 
-            <button id="syncBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2">
-                <i class="fas fa-sync-alt"></i>
-                <span>Sync Emails</span>
-            </button>
+            <div class="flex items-center space-x-4">
+                <div class="text-right hidden sm:block">
+                    <div class="text-xs text-gray-500">Last Synced</div>
+                    <div class="text-sm font-medium text-gray-700" id="lastSyncTime">Never</div>
+                </div>
+                <button id="syncBtn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-all shadow-sm hover:shadow-md">
+                    <i class="fas fa-sync-alt"></i>
+                    <span>Sync</span>
+                </button>
+            </div>
         </div>
     </header>
 
@@ -63,7 +76,9 @@
 
             <!-- Loading State -->
             <div id="loadingState" class="p-8 text-center">
-                <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent"></div>
+                <div
+                    class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-blue-600 border-t-transparent">
+                </div>
                 <p class="mt-2 text-gray-600">Loading emails...</p>
             </div>
 
@@ -157,13 +172,21 @@
                 const response = await fetch('/api/emails');
                 const data = await response.json();
 
-                if (data.success && data.emails.length > 0) {
-                    renderEmails(data.emails);
-                    showLoading(false);
-                    document.getElementById('emailList').classList.remove('hidden');
-                } else {
-                    showLoading(false);
-                    document.getElementById('emptyState').classList.remove('hidden');
+                if (data.success) {
+                    if (data.last_sync) {
+                        updateSyncTime(data.last_sync);
+                    }
+
+                    if (data.emails.length > 0) {
+                        renderEmails(data.emails);
+                        showLoading(false);
+                        document.getElementById('emailList').classList.remove('hidden');
+                        document.getElementById('emptyState').classList.add('hidden');
+                    } else {
+                        showLoading(false);
+                        document.getElementById('emptyState').classList.remove('hidden');
+                        document.getElementById('emailList').classList.add('hidden');
+                    }
                 }
 
             } catch (error) {
@@ -173,26 +196,32 @@
             }
         }
 
+        function updateSyncTime(isoString) {
+            if (!isoString) return;
+            const date = new Date(isoString);
+            document.getElementById('lastSyncTime').textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
         function renderEmails(emails) {
             const emailList = document.getElementById('emailList');
             emailList.innerHTML = '';
 
             emails.forEach(email => {
                 const emailDiv = document.createElement('div');
-                emailDiv.className = `email-item p-4 cursor-pointer ${email.is_read ? 'email-read' : 'email-unread'}`;
+                emailDiv.className = `email-item p-4 cursor-pointer transition-colors border-b border-gray-100 ${email.is_read ? 'email-read' : 'email-unread'}`;
 
                 emailDiv.innerHTML = `
                     <div class="flex items-start space-x-4">
-                        <button class="star-btn mt-1" onclick="toggleStar('${email.id}', ${!email.is_starred}); event.stopPropagation();">
-                            <i class="fas fa-star ${email.is_starred ? 'text-yellow-500' : 'text-gray-300'}"></i>
+                        <button class="star-btn mt-1 focus:outline-none" onclick="toggleStar('${email.id}', ${!email.is_starred}); event.stopPropagation();">
+                            <i class="fas fa-star ${email.is_starred ? 'text-yellow-400' : 'text-gray-300'} hover:text-yellow-400 transition-colors"></i>
                         </button>
                         <div class="flex-1 min-w-0">
                             <div class="flex items-baseline justify-between mb-1">
-                                <div class="font-medium text-gray-900 truncate">${email.sender || 'Unknown'}</div>
-                                <div class="text-sm text-gray-500 ml-2">${formatDate(email.date)}</div>
+                                <div class="font-bold text-gray-900 truncate">${email.sender || 'Unknown'}</div>
+                                <div class="text-xs text-gray-500 ml-2 whitespace-nowrap">${formatDate(email.date)}</div>
                             </div>
-                            <div class="text-gray-900 truncate mb-1">${email.subject}</div>
-                            <div class="text-sm text-gray-600 truncate">${email.body ? email.body.substring(0, 100) : '...'}</div>
+                            <div class="text-gray-900 truncate mb-1 text-sm">${email.subject}</div>
+                            <div class="text-sm text-gray-500 truncate">${email.body ? email.body.substring(0, 100).replace(/<[^>]*>/g, '') : '...'}</div>
                         </div>
                     </div>
                 `;
@@ -287,7 +316,6 @@
                     showToast(data.message, 'success');
                     await loadEmails();
                     await loadStats();
-                    document.getElementById('emptyState').classList.add('hidden');
                 } else {
                     showToast('Sync failed: ' + data.error, 'error');
                 }
@@ -298,7 +326,7 @@
             } finally {
                 const btn = document.getElementById('syncBtn');
                 btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Sync Emails</span>';
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Sync</span>';
             }
         }
 
@@ -311,8 +339,11 @@
                     document.getElementById('totalCount').textContent = data.stats.total;
                     document.getElementById('unreadCount').textContent = data.stats.unread;
                     document.getElementById('starredCount').textContent = data.stats.starred;
-                }
 
+                    if (data.stats.last_sync) {
+                        updateSyncTime(data.stats.last_sync);
+                    }
+                }
             } catch (error) {
                 console.error('Error loading stats:', error);
             }
@@ -365,4 +396,5 @@
         }
     </script>
 </body>
+
 </html>
