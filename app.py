@@ -28,8 +28,12 @@ app = Flask(__name__, template_folder='.')
 CORS(app)
 
 # SQLite Configuration
-DB_PATH = os.path.join('instance', 'vexmail.db')
-os.makedirs('instance', exist_ok=True)
+# Using /tmp for Vercel serverless functions as it's the only writable directory
+if os.environ.get('VERCEL'):
+    DB_PATH = os.path.join('/tmp', 'vexmail.db')
+else:
+    DB_PATH = os.path.join('instance', 'vexmail.db')
+    os.makedirs('instance', exist_ok=True)
 
 def get_db_connection():
     """Get a connection to the SQLite database"""
@@ -39,7 +43,7 @@ def get_db_connection():
 
 def init_db():
     """Initialize the SQLite database with the required table"""
-    print(f"[Vexmail] Initializing local database at {DB_PATH}...")
+    print(f"[Vexmail] Initializing database at {DB_PATH}...")
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -48,25 +52,28 @@ def init_db():
         cursor.execute("SELECT email_id FROM emails LIMIT 1")
     except sqlite3.OperationalError:
         # Table doesn't exist or doesn't have email_id
-        print("[Vexmail] Existing table schema is outdated or missing. Recreating...")
+        print("[Vexmail] Table missing or schema outdated. Recreating...")
         cursor.execute("DROP TABLE IF EXISTS emails")
         
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS emails (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email_id TEXT UNIQUE NOT NULL,
-            subject TEXT,
-            sender TEXT,
-            date TEXT,
-            body TEXT,
-            is_read BOOLEAN DEFAULT 0,
-            is_starred BOOLEAN DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS emails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email_id TEXT UNIQUE NOT NULL,
+                subject TEXT,
+                sender TEXT,
+                date TEXT,
+                body TEXT,
+                is_read BOOLEAN DEFAULT 0,
+                is_starred BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
     conn.commit()
     conn.close()
-    print("[Vexmail] Database initialized successfully.")
+    print("[Vexmail] Database initialized.")
+
+# Initialize DB on import for Vercel
+init_db()
 
 # Vexmail configuration
 IMAP_SERVER = os.getenv('IMAP_SERVER', 'imap.gmail.com')
@@ -79,20 +86,17 @@ sync_lock = threading.Lock()
 
 def connect_to_imap():
     """Connect to IMAP server and return connection"""
-    print(f"\n[Vexmail] Attempting to connect to {IMAP_SERVER}...")
+    print(f"\n[Vexmail] Connecting to {IMAP_SERVER}...")
     try:
         if not EMAIL_USER or not EMAIL_PASS:
-            print("[Vexmail] ERROR: Email credentials missing in .env file!")
+            print("[Vexmail] Error: Email credentials missing!")
             return None
             
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        print(f"[Vexmail] Connected. Logging in as {EMAIL_USER}...")
         mail.login(EMAIL_USER, EMAIL_PASS)
         mail.select('inbox')
-        print("[Vexmail] Successfully authenticated and selected inbox.")
         return mail
     except Exception as e:
-        print(f"[Vexmail] FAILED to connect: {str(e)}")
         logger.error(f"Failed to connect to IMAP: {e}")
         return None
 
@@ -116,27 +120,24 @@ def decode_email_header(header):
     return decoded_string
 
 def fetch_emails_from_server(limit=50):
-    """Fetch emails from IMAP server"""
+    """Fetch emails from IMAP server using UIDs"""
     mail = connect_to_imap()
     if not mail:
-        return {"error": "Could not connect to email server. Please check your credentials."}
+        return {"error": "Could not connect to email server."}
 
     try:
-        print("[Vexmail] Searching for emails...")
-        status, messages = mail.search(None, 'ALL')
+        # Use UIDs instead of sequence numbers
+        status, messages = mail.uid('search', None, 'ALL')
         email_ids = messages[0].split()
         
-        total_count = len(email_ids)
-        print(f"[Vexmail] Found {total_count} total emails. Fetching latest {limit}...")
-
-        # Get latest emails
+        # Get latest emails (UIDs are always increasing)
         email_ids = email_ids[-limit:]
         emails = []
 
-        for idx, email_id in enumerate(reversed(email_ids)):
+        for email_id in reversed(email_ids):
             try:
-                print(f"[Vexmail] [{idx+1}/{len(email_ids)}] Fetching email ID: {email_id.decode()}...")
-                status, msg_data = mail.fetch(email_id, '(RFC822)')
+                # Fetch using UID
+                status, msg_data = mail.uid('fetch', email_id, '(RFC822)')
 
                 for response_part in msg_data:
                     if isinstance(response_part, tuple):
@@ -144,8 +145,6 @@ def fetch_emails_from_server(limit=50):
                         subject = decode_email_header(msg['subject'])
                         sender = decode_email_header(msg['from'])
                         date = msg['date']
-
-                        print(f"[Vexmail]   - Subject: {subject[:50]}...")
 
                         body = ""
                         if msg.is_multipart():
@@ -173,34 +172,18 @@ def fetch_emails_from_server(limit=50):
                         emails.append(email_data)
 
             except Exception as e:
-                print(f"[Vexmail] Error processing email {email_id.decode()}: {e}")
                 continue
 
-        print(f"[Vexmail] Successfully fetched {len(emails)} emails.")
         mail.close()
         mail.logout()
         return emails
 
     except Exception as e:
-        print(f"[Vexmail] CRITICAL Error fetching emails: {e}")
         return {"error": str(e)}
 
-def background_sync_worker():
-    """Background worker to sync emails periodically"""
-    global last_sync_time
-    print("[Vexmail] Background sync worker started.")
-    while True:
-        try:
-            print("\n[Vexmail] Background sync triggered...")
-            sync_emails_internal()
-            last_sync_time = datetime.now()
-            print(f"[Vexmail] Background sync completed at {last_sync_time.strftime('%H:%M:%S')}")
-        except Exception as e:
-            print(f"[Vexmail] Background sync error: {e}")
-        time.sleep(600)
-
 def sync_emails_internal(limit=50):
-    """Internal sync logic shared by background and manual sync"""
+    """Internal sync logic"""
+    global last_sync_time
     with sync_lock:
         emails = fetch_emails_from_server(limit=limit)
         if isinstance(emails, dict) and 'error' in emails:
@@ -210,19 +193,19 @@ def sync_emails_internal(limit=50):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        print(f"[Vexmail] Saving {len(emails)} emails to local database...")
         for email_data in emails:
             try:
+                # We can now rely on email_id being a unique UID
                 cursor.execute('INSERT OR IGNORE INTO emails (email_id, subject, sender, date, body, is_read, is_starred, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     (email_data['email_id'], email_data['subject'], email_data['sender'], email_data['date'], email_data['body'], email_data['is_read'], email_data['is_starred'], email_data['created_at']))
                 if cursor.rowcount > 0:
                     new_count += 1
-            except Exception as e:
-                print(f"[Vexmail] Error saving email {email_data.get('email_id')}: {e}")
+            except:
                 continue
         
         conn.commit()
         conn.close()
+        last_sync_time = datetime.now()
         return new_count, None
 
 @app.route('/')
@@ -233,11 +216,11 @@ def index():
 @app.route('/api/emails')
 def get_emails():
     """Get all emails from SQLite"""
-    print("[Vexmail] API: Fetching all emails...")
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM emails ORDER BY created_at DESC LIMIT 50')
+        # Sort by UID (email_id) DESC to ensure strictly latest emails first
+        cursor.execute('SELECT * FROM emails ORDER BY CAST(email_id AS INTEGER) DESC LIMIT 50')
         rows = cursor.fetchall()
         emails = [dict(row) for row in rows]
         conn.close()
@@ -249,13 +232,11 @@ def get_emails():
             'last_sync': last_sync_time.isoformat() if last_sync_time else None
         })
     except Exception as e:
-        print(f"[Vexmail] API ERROR (get_emails): {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/emails/<int:email_db_id>')
 def get_email(email_db_id):
     """Get single email by ID"""
-    print(f"[Vexmail] API: Fetching email detail for ID: {email_db_id}")
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -273,29 +254,25 @@ def get_email(email_db_id):
             conn.close()
             return jsonify({'success': False, 'error': 'Email not found'}), 404
     except Exception as e:
-        print(f"[Vexmail] API ERROR (get_email): {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/sync', methods=['POST'])
+@app.route('/api/sync', methods=['POST', 'GET'])
 def sync_emails():
-    """Manual sync with throttling"""
-    global last_sync_time
-    print("[Vexmail] API: Manual sync requested.")
-    
-    if last_sync_time and (datetime.now() - last_sync_time).total_seconds() < 60:
-        print("[Vexmail] Manual sync throttled.")
-        return jsonify({'success': True, 'message': 'Emails already up to date.', 'new_count': 0})
+    """Manual sync or Cron trigger"""
+    # Simple check for cron (optional)
+    if request.method == 'GET' and not request.headers.get('Authorization'):
+        # In production, you'd check for a secret token
+        pass
 
     new_count, error = sync_emails_internal()
     if error:
         return jsonify({'success': False, 'error': error}), 500
 
-    last_sync_time = datetime.now()
     return jsonify({'success': True, 'message': f'Synced {new_count} new emails', 'new_count': new_count})
 
 @app.route('/api/emails/<int:email_db_id>/star', methods=['POST'])
 def toggle_star(email_db_id):
-    """Toggle star status of email"""
+    """Toggle star status"""
     try:
         data = request.get_json()
         is_starred = 1 if data.get('is_starred', False) else 0
@@ -309,7 +286,7 @@ def toggle_star(email_db_id):
 
 @app.route('/api/emails/<int:email_db_id>/read', methods=['POST'])
 def toggle_read(email_db_id):
-    """Toggle read status of email"""
+    """Toggle read status"""
     try:
         data = request.get_json()
         is_read = 1 if data.get('is_read', False) else 0
@@ -323,7 +300,7 @@ def toggle_read(email_db_id):
 
 @app.route('/api/stats')
 def get_stats():
-    """Get email statistics"""
+    """Get statistics"""
     try:
         conn = get_db_connection()
         total = conn.execute('SELECT COUNT(*) FROM emails').fetchone()[0]
@@ -337,7 +314,8 @@ def get_stats():
                 'total': total,
                 'unread': unread,
                 'starred': starred,
-                'last_sync': last_sync_time.isoformat() if last_sync_time else None
+                'last_sync': last_sync_time.isoformat() if last_sync_time else None,
+                'account': EMAIL_USER
             }
         })
     except Exception as e:
@@ -345,28 +323,12 @@ def get_stats():
 
 @app.route('/api/health')
 def health_check():
-    """Health check endpoint"""
+    """Health check"""
     return jsonify({
         'success': True,
-        'status': 'healthy',
-        'last_sync': last_sync_time.isoformat() if last_sync_time else None
+        'status': 'healthy'
     })
 
 if __name__ == '__main__':
-    print("\n" + "="*50)
-    print("Welcome to Vexmail - Your Ultimate Email Client")
-    print("="*50)
-    
-    init_db()
-    
-    if EMAIL_USER and EMAIL_PASS:
-        bg_thread = threading.Thread(target=background_sync_worker, daemon=True)
-        bg_thread.start()
-        print("[*] Background sync worker initiated.")
-    else:
-        print("[!] WARNING: Email credentials not configured. Background sync disabled.")
-
-    print(f"[*] Starting server on http://0.0.0.0:5000")
-    print("="*50 + "\n")
-
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    # When running locally
+    app.run(host='0.0.0.0', port=5000, debug=True)  # Run the app

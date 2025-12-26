@@ -37,6 +37,11 @@
 
             <div class="flex items-center space-x-4">
                 <div class="text-right hidden sm:block">
+                    <div id="accountDisplay" class="text-sm font-semibold text-blue-600 truncate max-w-[200px]">
+                        Loading...</div>
+                    <div class="text-xs text-gray-400">Vexmail Account</div>
+                </div>
+                <div class="text-right hidden sm:block border-l border-gray-200 pl-4">
                     <div class="text-xs text-gray-500">Last Synced</div>
                     <div class="text-sm font-medium text-gray-700" id="lastSyncTime">Never</div>
                 </div>
@@ -233,7 +238,10 @@
 
         async function openEmail(emailId) {
             try {
+                showToast('Opening email...', 'info');
                 const response = await fetch(`/api/emails/${emailId}`);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
                 const data = await response.json();
 
                 if (data.success) {
@@ -243,11 +251,13 @@
 
                     // Reload list to update read status
                     setTimeout(() => loadEmails(), 500);
+                } else {
+                    showToast('Error: ' + data.error, 'error');
                 }
 
             } catch (error) {
                 console.error('Error opening email:', error);
-                showToast('Failed to load email', 'error');
+                showToast('Failed to load email details. Server error.', 'error');
             }
         }
 
@@ -339,6 +349,7 @@
                     document.getElementById('totalCount').textContent = data.stats.total;
                     document.getElementById('unreadCount').textContent = data.stats.unread;
                     document.getElementById('starredCount').textContent = data.stats.starred;
+                    document.getElementById('accountDisplay').textContent = data.stats.account || 'Not Configured';
 
                     if (data.stats.last_sync) {
                         updateSyncTime(data.stats.last_sync);
